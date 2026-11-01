@@ -335,3 +335,244 @@ body:has(.tp-night) {
 .tp-editor .ProseMirror th {
   background: #2c2c2c;
 }
+
+/* Settings panel */
+.tp-settings {
+  color: white;
+  font-size: 14px;
+}
+
+.tp-set-tabs {
+  position: sticky;
+  top: -25px;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0 -25px 18px;
+  padding: 8px 25px;
+  background: #0d0d0d;
+  border-bottom: 1px solid #333;
+}
+
+.tp-set-tabs button {
+  flex: 1;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: transparent;
+  color: #aaa;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tp-set-tabs button:hover {
+  background: #222;
+  color: white;
+}
+
+.tp-set-tabs button[aria-selected="true"] {
+  background: #333;
+  color: white;
+  font-weight: 600;
+}
+
+.tp-set-row {
+  margin-bottom: 16px;
+}
+
+.tp-set-heading {
+  margin: 22px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid #2a2a2a;
+  color: #999;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tp-set-heading:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.tp-set-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.tp-set-value {
+  color: #bbb;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tp-set-slider {
+  display: block;
+}
+
+.tp-set-slider input[type="range"] {
+  display: block;
+  width: 100%;
+  accent-color: #ffeb3b;
+  cursor: pointer;
+}
+
+.tp-set-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+}
+
+.tp-set-toggle input[type="checkbox"] {
+  flex: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  appearance: none;
+  border-radius: 11px;
+  background: #444;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.tp-set-toggle input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.15s ease;
+}
+
+.tp-set-toggle input[type="checkbox"]:checked {
+  background: #2e7d32;
+}
+
+.tp-set-toggle input[type="checkbox"]:checked::after {
+  transform: translateX(16px);
+}
+
+.tp-set-toggle input[type="color"] {
+  flex: none;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tp-set-toggle select {
+  min-width: 0;
+  max-width: 60%;
+  padding: 6px 8px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: #1a1a1a;
+  color: white;
+}
+
+.tp-set-choice {
+  display: grid;
+  gap: 6px;
+}
+
+.tp-set-choice button {
+  padding: 8px 6px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #1a1a1a;
+  color: #ddd;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tp-set-choice button:hover {
+  border-color: #777;
+}
+
+.tp-set-choice button[aria-pressed="true"] {
+  border-color: white;
+  background: #37474f;
+  color: white;
+}
+
+.tp-set-swatches {
+  display: flex;
+  gap: 8px;
+}
+
+.tp-set-swatches button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #555;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.tp-set-swatches button[aria-pressed="true"] {
+  outline: 2px solid white;
+  outline-offset: 2px;
+}
+
+.tp-set-hint {
+  margin: 5px 0 0;
+  color: #999;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tp-settings button:focus-visible,
+.tp-settings input:focus-visible,
+.tp-settings select:focus-visible {
+  outline: 2px solid #90caf9;
+  outline-offset: 2px;
+}
+
+.tp-set-danger {
+  border: 1px solid #b71c1c;
+  border-radius: 6px;
+  background: transparent;
+  color: #ef5350;
+  cursor: pointer;
+}
+
+.tp-set-row > .tp-set-danger {
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.tp-set-footer {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid #2a2a2a;
+}
+
+.tp-set-footer button {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: transparent;
+  color: #ccc;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tp-set-footer .tp-set-danger {
+  border-color: #b71c1c;
+  color: #ef5350;
+}

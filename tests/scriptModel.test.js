@@ -72,6 +72,54 @@ describe("buildScriptModel", () => {
     expect(words).toEqual(["a", "b", "c", "d"]);
   });
 
+  describe("text in brackets", () => {
+    const notes = (line) =>
+      line.items.filter((item) => item.note).map((item) => item.note);
+
+    it("is shown but not spoken", () => {
+      const { words, lines } = buildScriptModel("Say (smile) this [slide 2] now");
+      expect(words).toEqual(["Say", "this", "now"]);
+      expect(notes(lines[0])).toEqual(["(smile)", "[slide 2]"]);
+    });
+
+    it("keeps spacing and attached punctuation", () => {
+      const { lines } = buildScriptModel("Word (note), next");
+      const rendered = lines[0].items
+        .map((item) => (item.word ?? item.note) + (item.space ? " " : ""))
+        .join("");
+      expect(rendered).toBe("Word (note), next");
+    });
+
+    it("handles nesting and formatting inside", () => {
+      const { words, lines } = buildScriptModel("a (b (c) **d** e) f");
+      expect(words).toEqual(["a", "f"]);
+      expect(notes(lines[0]).join("")).toBe("(b (c) d e)");
+    });
+
+    it("keeps an unclosed bracket spoken", () => {
+      expect(buildScriptModel("one (two three").words).toEqual(["one", "(two", "three"]);
+      expect(buildScriptModel("one) two").words).toEqual(["one)", "two"]);
+    });
+
+    it("does not span line breaks", () => {
+      expect(buildScriptModel("one (two\nthree) four").words).toEqual([
+        "one", "(two", "three)", "four",
+      ]);
+    });
+
+    it("can be spoken if the user prefers", () => {
+      expect(buildScriptModel("a (b) c", { speakBrackets: true }).words).toEqual([
+        "a", "(b)", "c",
+      ]);
+    });
+
+    it("works in tables", () => {
+      expect(buildScriptModel("| a (x) | b |\n|---|---|\n| c | d |").words).toEqual([
+        "a", "b", "c", "d",
+      ]);
+    });
+  });
+
   it("assigns word indexes in reading order", () => {
     const { lines, lineStart } = buildScriptModel("one two\nthree");
     expect(lineStart).toEqual([0, 2]);
