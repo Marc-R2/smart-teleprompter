@@ -102,6 +102,27 @@ export function tokenizeSpeech(transcript) {
     .filter(Boolean);
 }
 
+// Finds "(...)" and "[...]" spanning `text`, outermost pairs only. A bracket that
+// is never closed stays spoken, so a stray "(" cannot silence the rest of a line.
+export function findBracketRanges(text) {
+  const closing = { "(": ")", "[": "]" };
+  const ranges = [];
+  const stack = [];
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (closing[char]) {
+      stack.push({ at: i, expected: closing[char] });
+    } else if (char === ")" || char === "]") {
+      while (stack.length && stack[stack.length - 1].expected !== char) {
+        stack.pop();
+      }
+      const open = stack.pop();
+      if (open && !stack.length) ranges.push([open.at, i + 1]);
+    }
+  }
+  return ranges;
+}
+
 function decodeEntities(value) {
   return value
     .replace(/&lt;/g, "<")
@@ -150,7 +171,7 @@ function flattenInline(tokens, marks, sink) {
   }
 }
 
-export function buildScriptModel(source) {
+export function buildScriptModel(source, { speakBrackets = false } = {}) {
   const lines = [];
   const words = [];
   const normalized = [];
@@ -173,23 +194,62 @@ export function buildScriptModel(source) {
     }
   };
 
-  // Collects inline tokens into `items`; `onBreak` handles a hard line break.
-  const makeSink = (getItems, isCoHost, onBreak) => ({
-    text(value, marks) {
-      for (const part of value.match(/\s+|\S+/g) ?? []) {
-        const items = getItems();
-        if (/^\s/.test(part)) {
-          if (items.length) items[items.length - 1].space = true;
-        } else {
-          addWords(items, part, marks, isCoHost());
+  // Collects a line's inline tokens first: a bracket may open in plain text and
+  // close inside **bold** text, which is only visible with the whole line.
+  const makeSink = (onBreak) => {
+    const pieces = [];
+    return {
+      text(value, marks) {
+        pieces.push({ value, marks });
+      },
+      note(value) {
+        pieces.push({ note: value });
+      },
+      breakLine: onBreak,
+      flush(items, coHost) {
+        const whole = pieces.map((piece) => piece.value ?? "").join("");
+        const ranges = speakBrackets ? [] : findBracketRanges(whole);
+        const pushText = (value, marks) => {
+          for (const part of value.match(/\s+|\S+/g) ?? []) {
+            if (/^\s/.test(part)) {
+              if (items.length) items[items.length - 1].space = true;
+            } else {
+              addWords(items, part, marks, coHost);
+            }
+          }
+        };
+        let offset = 0;
+        let range = 0;
+        for (const piece of pieces) {
+          if (piece.note !== undefined) {
+            items.push({ note: piece.note, space: false });
+            continue;
+          }
+          const end = offset + piece.value.length;
+          let at = offset;
+          while (at < end) {
+            while (range < ranges.length && ranges[range][1] <= at) range += 1;
+            const current = ranges[range];
+            if (current && current[0] <= at) {
+              const stop = Math.min(end, current[1]);
+              const text = whole.slice(at, stop);
+              const previous = items[items.length - 1];
+              // Continues across a change of formatting inside the bracket.
+              if (previous?.bracket && at > current[0]) previous.note += text;
+              else items.push({ note: text, bracket: true, space: false });
+              at = stop;
+            } else {
+              const stop = Math.min(end, current ? current[0] : end);
+              pushText(whole.slice(at, stop), piece.marks);
+              at = stop;
+            }
+          }
+          offset = end;
         }
-      }
-    },
-    note(value) {
-      getItems().push({ note: value, space: true });
-    },
-    breakLine: onBreak,
-  });
+        pieces.length = 0;
+      },
+    };
+  };
 
   const emitInline = (tokens, base, coHost, firstMarker) => {
     let marker = firstMarker;
@@ -203,6 +263,7 @@ export function buildScriptModel(source) {
     let line = startLine();
     const firstWordOfLine = [words.length];
     const finish = () => {
+      sink.flush(line.items, line.coHost);
       const first = line.items.find((item) => item.word !== undefined);
       if (first && !line.coHost && CO_HOST_NAME_RE.test(first.word)) {
         line.coHost = true;
@@ -210,15 +271,11 @@ export function buildScriptModel(source) {
           skippable[i] = true;
       }
     };
-    const sink = makeSink(
-      () => line.items,
-      () => line.coHost,
-      () => {
-        finish();
-        line = startLine();
-        firstWordOfLine[0] = words.length;
-      }
-    );
+    const sink = makeSink(() => {
+      finish();
+      line = startLine();
+      firstWordOfLine[0] = words.length;
+    });
     flattenInline(tokens, {}, sink);
     finish();
     return line;
@@ -301,11 +358,9 @@ export function buildScriptModel(source) {
             })];
             for (const cell of cells) {
               const items = [];
-              flattenInline(
-                cell.tokens,
-                {},
-                makeSink(() => items, () => context.coHost, () => {})
-              );
+              const sink = makeSink(() => {});
+              flattenInline(cell.tokens, {}, sink);
+              sink.flush(items, context.coHost);
               line.cells.push(items);
             }
           };

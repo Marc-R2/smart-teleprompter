@@ -43,8 +43,8 @@ A free, open-source teleprompter application that uses real-time speech recognit
 - **Markdown scripts** — headings, bold, italic, underline, strikethrough,
   highlight, lists, tables and dividers, edited in a rich text editor or as
   Markdown source
-- **Unspoken notes** — code blocks and `inline code` stay visible but are never
-  tracked; quotes (`>>`) and `@Name:` lines mark a co-host's part
+- **Unspoken notes** — code blocks, `inline code` and text in (round) or
+  [square] brackets stay visible but are never tracked; quotes (`>>`) and `@Name:` lines mark a co-host's part
 - **Night mode** (`N`) — dim amber, red or gray text on pure black, with only a
   few lines around your position lit and all controls hidden until you move the
   pointer. Disturbs others as little as possible in a dark room

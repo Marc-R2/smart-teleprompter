@@ -82,7 +82,8 @@ describe("Recognition engine and stats", () => {
     vi.stubGlobal("Worker", worker);
     render(<SmartTeleprompter />);
     fireEvent.click(screen.getByLabelText("Settings"));
-    expect(await screen.findByText("Speech recognition:", { exact: false })).toHaveTextContent("Cloud");
+    fireEvent.click(await screen.findByRole("tab", { name: "Tracking" }));
+    expect(screen.getByRole("button", { name: "Cloud (default)" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByText("On device (experimental)"));
     expect(screen.getByRole("dialog")).toHaveTextContent("EXPERIMENTAL");
     expect(screen.getByRole("dialog")).toHaveTextContent("huggingface.co");
@@ -97,5 +98,58 @@ describe("Recognition engine and stats", () => {
     expect(screen.queryByLabelText("Session stats")).toBeNull();
     fireEvent.keyDown(window, { key: "i" });
     expect(await screen.findByLabelText("Session stats")).toHaveTextContent("Elapsed");
+  });
+});
+
+describe("Settings panel", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.location.hash = "";
+  });
+
+  const openTab = async (name) => {
+    fireEvent.click(screen.getByLabelText("Settings"));
+    fireEvent.click(await screen.findByRole("tab", { name }));
+  };
+
+  it("offers far more than nine lit lines in night mode", async () => {
+    render(<SmartTeleprompter />);
+    await openTab("Night");
+    const slider = screen.getByLabelText(/Lit lines/);
+    expect(Number(slider.max)).toBeGreaterThanOrEqual(50);
+    fireEvent.change(slider, { target: { value: "40" } });
+    expect(slider.value).toBe("40");
+  });
+
+  it("only shows the lookahead for classic tracking", async () => {
+    render(<SmartTeleprompter />);
+    await openTab("Tracking");
+    expect(screen.queryByLabelText(/Lookahead/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Classic" }));
+    expect(screen.getByLabelText(/Lookahead/)).toBeInTheDocument();
+  });
+
+  it("resets one section and leaves the others alone", async () => {
+    render(<SmartTeleprompter />);
+    await openTab("Text");
+    fireEvent.change(screen.getByLabelText(/Font size/), { target: { value: "70" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Night" }));
+    fireEvent.change(screen.getByLabelText(/Lit lines/), { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reset Night" }));
+    expect(screen.getByLabelText(/Lit lines/).value).toBe("3");
+    fireEvent.click(screen.getByRole("tab", { name: "Text" }));
+    expect(screen.getByLabelText(/Font size/).value).toBe("70");
+  });
+
+  it("stops tracking text in brackets, and resumes when asked", async () => {
+    localStorage.setItem("tp_settings_v1", JSON.stringify({ text: "say (smile) this" }));
+    const { container } = render(<SmartTeleprompter />);
+    const spoken = () =>
+      [...container.querySelectorAll('[id^="word-"]')].map((w) => w.textContent.trim());
+    await waitFor(() => expect(spoken()).toEqual(["say", "this"]));
+    expect(container.textContent).toContain("(smile)");
+    await openTab("Tracking");
+    fireEvent.click(screen.getByRole("switch", { name: /brackets/ }));
+    await waitFor(() => expect(spoken()).toEqual(["say", "(smile)", "this"]));
   });
 });

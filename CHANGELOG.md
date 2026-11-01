@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ✨ **Read Highlighting**: Soft highlight for what was just said, a fainter one for everything already read, which also remains after jumping back
 - 📝 **Markdown Scripts**: Headings, emphasis, highlight, lists, tables and dividers. Existing plain-text scripts keep their line breaks
 - 🖊️ **Rich Text Editor**: Formatting toolbar, Markdown paste and a Markdown source view. Falls back to a plain text field if it cannot load
-- 🙊 **Unspoken Notes**: Code blocks and inline code are shown but never tracked
+- 🙊 **Unspoken Notes**: Code blocks, inline code and text in brackets are shown but never tracked. Brackets can be switched back to spoken in Settings
+- ⚙️ **Redesigned Settings**: Tabs by topic, one consistent set of controls and a reset for each section; up to 60 lit lines in night mode
 - 🌙 **Night Mode** (`N`): Dim tinted text on pure black, a lit band around the reading position and controls that hide themselves
 - 🔆 **Wake Lock**: The screen stays on while voice tracking or auto-scroll runs
 - 📊 **Stats Display** (`I`): Time, tempo, progress, read and skipped words and a live transcript, in a corner of your choice

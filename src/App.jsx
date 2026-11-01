@@ -28,6 +28,7 @@ import {
   unloadLocalEngine,
 } from "./lib/localRecognizer";
 import SessionHud from "./components/SessionHud";
+import SettingsPanel, { NIGHT_TINTS } from "./components/SettingsPanel";
 import LocalEngineDialog from "./components/LocalEngineDialog";
 
 // Inline SVG icons (Heroicons v2.1.1 outline, MIT). Inlined instead of
@@ -73,21 +74,6 @@ function Icon({ name }) {
 
 const HEADING_SIZES = { 1: "1.5em", 2: "1.3em", 3: "1.15em" };
 
-// Night tints are multiplied over the whole page. Red and amber light disturb
-// other people and dark-adapted eyes the least.
-const NIGHT_TINTS = {
-  amber: { label: "Amber", rgb: [255, 170, 70] },
-  red: { label: "Red", rgb: [255, 70, 50] },
-  neutral: { label: "Gray", rgb: [255, 255, 255] },
-};
-
-const HUD_CORNERS = [
-  ["top-left", "↖ Top left"],
-  ["top-right", "↗ Top right"],
-  ["bottom-left", "↙ Bottom left"],
-  ["bottom-right", "↘ Bottom right"],
-];
-
 function withAlpha(hexColor, alpha) {
   const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hexColor);
   if (!match) return hexColor;
@@ -131,11 +117,12 @@ function LineItems({
           key={`note-${position}`}
           style={{
             opacity: 0.5,
-            fontFamily: "monospace",
-            fontSize: "0.75em",
+            fontFamily: item.bracket ? undefined : "monospace",
+            fontSize: item.bracket ? "0.85em" : "0.75em",
           }}
         >
-          {item.note}{" "}
+          {item.note}
+          {item.space ? " " : ""}
         </span>
       );
     }
@@ -526,6 +513,8 @@ Happy recording!`);
   const [spanStart, setSpanStart] = useState(-1);
   const [readVersions, setReadVersions] = useState([]);
   const [micError, setMicError] = useState("");
+  const [speakBrackets, setSpeakBrackets] = useState(false);
+  const [settingsTab, setSettingsTab] = useState("text");
   const [showStats, setShowStats] = useState(false);
   const [statsCorner, setStatsCorner] = useState("bottom-left");
   const [showTranscript, setShowTranscript] = useState(true);
@@ -906,6 +895,7 @@ Happy recording!`);
     nightBrightness: 0.4,
     nightTint: "amber",
     nightFocusLines: 3,
+    speakBrackets: false,
     showStats: false,
     statsCorner: "bottom-left",
     showTranscript: true,
@@ -945,6 +935,7 @@ Happy recording!`);
     setNightBrightness(defaultSettings.nightBrightness);
     setNightTint(defaultSettings.nightTint);
     setNightFocusLines(defaultSettings.nightFocusLines);
+    setSpeakBrackets(defaultSettings.speakBrackets);
     setShowStats(defaultSettings.showStats);
     setStatsCorner(defaultSettings.statsCorner);
     setShowTranscript(defaultSettings.showTranscript);
@@ -1203,6 +1194,7 @@ Happy recording!`);
     if (s.nightBrightness != null) setNightBrightness(s.nightBrightness);
     if (s.nightTint) setNightTint(s.nightTint);
     if (s.nightFocusLines != null) setNightFocusLines(s.nightFocusLines);
+    if (s.speakBrackets != null) setSpeakBrackets(s.speakBrackets);
     if (s.showStats != null) setShowStats(s.showStats);
     if (s.statsCorner) setStatsCorner(s.statsCorner);
     if (s.showTranscript != null) setShowTranscript(s.showTranscript);
@@ -1299,6 +1291,7 @@ Happy recording!`);
         nightBrightness,
         nightTint,
         nightFocusLines,
+        speakBrackets,
         showStats,
         statsCorner,
         showTranscript,
@@ -1344,6 +1337,7 @@ Happy recording!`);
     nightBrightness,
     nightTint,
     nightFocusLines,
+    speakBrackets,
     showStats,
     statsCorner,
     showTranscript,
@@ -1572,8 +1566,8 @@ Happy recording!`);
   // Deferred: parsing a long script must never slow down typing in the editor.
   const deferredText = useDeferredValue(text);
   const scriptModel = useMemo(
-    () => buildScriptModel(deferredText),
-    [deferredText]
+    () => buildScriptModel(deferredText, { speakBrackets }),
+    [deferredText, speakBrackets]
   );
   const scriptLines = scriptModel.lines;
   const lineStartIndex = scriptModel.lineStart;
@@ -2372,6 +2366,7 @@ Happy recording!`);
         !showAddScript &&
         !deleteScriptConfirm &&
         !showLocalDialog &&
+        !showResetConfirm &&
         !event.target.closest('[data-panel="settings"]')
       ) {
         setShowSettings(false);
@@ -2390,6 +2385,7 @@ Happy recording!`);
     showAddScript,
     deleteScriptConfirm,
     showLocalDialog,
+    showResetConfirm,
   ]);
 
   useEffect(() => {
@@ -3258,8 +3254,9 @@ Happy recording!`);
             padding: "25px",
             borderRadius: "12px",
             zIndex: 10000,
-            minWidth: "320px",
-            width: showEditor ? "min(720px, calc(100vw - 32px))" : undefined,
+            width: showEditor
+              ? "min(720px, calc(100vw - 32px))"
+              : "min(460px, calc(100vw - 32px))",
             boxSizing: "border-box",
             maxWidth: "calc(100vw - 32px)",
             maxHeight: "80vh",
@@ -3556,1552 +3553,99 @@ Happy recording!`);
               <div style={{ height: 8 }} />
             </div>
           ) : (
-            <>
-              <button
-                onClick={() => setShowResetConfirm(true)}
-                style={{
-                  width: "100%",
-                  marginBottom: "12px",
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  border: "1px solid #555",
-                  background: "#b71c1c",
-                  color: "white",
-                  cursor: "pointer",
-                  fontWeight: "bold",
-                }}
-              >
-                Reset Settings
-              </button>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Font size: {fontSize}px
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue = Math.round(16 + percentage * (80 - 16));
-                    setFontSize(Math.max(16, Math.min(80, newValue)));
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((fontSize - 16) / (80 - 16)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = fontSize;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 80;
-                      const minValue = 16;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue = Math.round(startValue + deltaValue);
-                        setFontSize(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Side padding: {sidePaddingVw}vw
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue = Math.round(0 + percentage * (40 - 0));
-                    setSidePaddingVw(Math.max(0, Math.min(40, newValue)));
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((sidePaddingVw - 0) / (40 - 0)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = sidePaddingVw;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 40;
-                      const minValue = 0;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue = Math.round(startValue + deltaValue);
-                        setSidePaddingVw(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Text align controls removed per request */}
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Text align
-                </label>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <button
-                    onClick={() => setTextAlignStyle("left")}
-                    style={{
-                      flex: 1,
-                      padding: "8px 10px",
-                      borderRadius: 6,
-                      border: "1px solid #555",
-                      background:
-                        textAlignStyle === "left" ? "#2e7d32" : "#0f0f0f",
-                      color: "white",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="white"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <line x1="3" y1="6" x2="21" y2="6" />
-                        <line x1="3" y1="12" x2="15" y2="12" />
-                        <line x1="3" y1="18" x2="18" y2="18" />
-                      </svg>
-                      Left
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => setTextAlignStyle("center")}
-                    style={{
-                      flex: 1,
-                      padding: "8px 10px",
-                      borderRadius: 6,
-                      border: "1px solid #555",
-                      background:
-                        textAlignStyle === "center" ? "#2e7d32" : "#0f0f0f",
-                      color: "white",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="white"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <line x1="6" y1="6" x2="18" y2="6" />
-                        <line x1="3" y1="12" x2="21" y2="12" />
-                        <line x1="6" y1="18" x2="18" y2="18" />
-                      </svg>
-                      Center
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => setTextAlignStyle("right")}
-                    style={{
-                      flex: 1,
-                      padding: "8px 10px",
-                      borderRadius: 6,
-                      border: "1px solid #555",
-                      background:
-                        textAlignStyle === "right" ? "#2e7d32" : "#0f0f0f",
-                      color: "white",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="white"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <line x1="3" y1="6" x2="21" y2="6" />
-                        <line x1="9" y1="12" x2="21" y2="12" />
-                        <line x1="6" y1="18" x2="21" y2="18" />
-                      </svg>
-                      Right
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Line height: {lineHeight.toFixed(1)}
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue =
-                      Math.round((1 + percentage * (3 - 1)) * 10) / 10;
-                    setLineHeight(Math.max(1, Math.min(3, newValue)));
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((lineHeight - 1) / (3 - 1)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = lineHeight;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 3;
-                      const minValue = 1;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue =
-                          Math.round((startValue + deltaValue) * 10) / 10;
-                        setLineHeight(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Paragraph spacing: {paragraphSpacingPx}px
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue = Math.round(0 + percentage * (40 - 0));
-                    setParagraphSpacingPx(Math.max(0, Math.min(40, newValue)));
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((paragraphSpacingPx - 0) / (40 - 0)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = paragraphSpacingPx;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 40;
-                      const minValue = 0;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue = Math.round(startValue + deltaValue);
-                        setParagraphSpacingPx(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Auto-scroll speed: {scrollSpeed}
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue = Math.round(10 + percentage * (200 - 10));
-                    setScrollSpeed(Math.max(10, Math.min(200, newValue)));
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((scrollSpeed - 10) / (200 - 10)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = scrollSpeed;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 200;
-                      const minValue = 10;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue = Math.round(startValue + deltaValue);
-                        setScrollSpeed(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Lookahead window: {lookaheadWindow} words
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue = Math.round(1 + percentage * (40 - 1));
-                    setLookaheadWindow(Math.max(1, Math.min(40, newValue)));
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((lookaheadWindow - 1) / (40 - 1)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = lookaheadWindow;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      // Max raised 20 -> 40 (GitHub #2): lets tracking skip
-                      // over a co-host's lines. Safe because far jumps still
-                      // require a 2-3 word exact match (see tryAdvanceByTokens)
-                      const maxValue = 40;
-                      const minValue = 1;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue = Math.round(startValue + deltaValue);
-                        setLookaheadWindow(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-                <div
-                  style={{ color: "#aaa", fontSize: "12px", marginTop: "4px" }}
-                >
-                  Increase if voice tracking feels slow (recommended: 12-15 for
-                  English, 8-10 for Greek)
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Speech recognition:{" "}
-                  {recognitionEngine === "local" ? "On device" : "Cloud"}
-                </label>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <button
-                    onClick={() => setRecognitionEngine("cloud")}
-                    aria-pressed={recognitionEngine === "cloud"}
-                    style={{
-                      flex: 1,
-                      padding: "10px 12px",
-                      borderRadius: "8px",
-                      border: "1px solid #555",
-                      background: recognitionEngine === "cloud" ? "#2e7d32" : "#37474f",
-                      color: "white",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Cloud (default)
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLocalStatus({ state: "idle" });
-                      setShowLocalDialog(true);
-                    }}
-                    aria-pressed={recognitionEngine === "local"}
-                    style={{
-                      flex: 1,
-                      padding: "10px 12px",
-                      borderRadius: "8px",
-                      border: "1px solid #555",
-                      background: recognitionEngine === "local" ? "#2e7d32" : "#37474f",
-                      color: "white",
-                      cursor: "pointer",
-                    }}
-                  >
-                    On device (experimental)
-                  </button>
-                </div>
-                {hasStoredModel && (
-                  <button
-                    onClick={removeLocalEngine}
-                    style={{
-                      marginTop: "8px",
-                      padding: "6px 10px",
-                      borderRadius: "6px",
-                      border: "1px solid #b71c1c",
-                      background: "transparent",
-                      color: "#ef5350",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                    }}
-                  >
-                    Delete the downloaded model and use cloud
-                  </button>
-                )}
-                <div
-                  style={{ color: "#aaa", fontSize: "12px", marginTop: "4px" }}
-                >
-                  Cloud uses your browser's speech service. On device keeps your
-                  voice on this device and needs a one-time model download.
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Stats display: {showStats ? "On" : "Off"} (I)
-                </label>
-                <button
-                  onClick={() => setShowStats(!showStats)}
-                  aria-label="Toggle stats display"
-                  style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid #555",
-                    background: showStats ? "#2e7d32" : "#37474f",
-                    color: "white",
-                    cursor: "pointer",
-                  }}
-                >
-                  {showStats ? "Hide" : "Show"}
-                </button>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: "6px",
-                    marginTop: "8px",
-                  }}
-                >
-                  {HUD_CORNERS.map(([corner, label]) => (
-                    <button
-                      key={corner}
-                      onClick={() => setStatsCorner(corner)}
-                      aria-pressed={statsCorner === corner}
-                      style={{
-                        padding: "6px",
-                        borderRadius: "6px",
-                        border: `1px solid ${statsCorner === corner ? "white" : "#555"}`,
-                        background: "transparent",
-                        color: "white",
-                        cursor: "pointer",
-                        fontSize: "12px",
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    color: "#ccc",
-                    fontSize: "13px",
-                    marginTop: "8px",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={showTranscript}
-                    onChange={(e) => setShowTranscript(e.target.checked)}
-                  />
-                  Show the last recognized words
-                </label>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Voice tracking: {smartMode ? "Smart" : "Classic"} (T)
-                </label>
-                <button
-                  onClick={() => setSmartMode(!smartMode)}
-                  style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid #555",
-                    background: smartMode ? "#2e7d32" : "#37474f",
-                    color: "white",
-                    cursor: "pointer",
-                  }}
-                  aria-label="Toggle smart tracking"
-                >
-                  {smartMode ? "Smart" : "Classic"}
-                </button>
-                <div
-                  style={{ color: "#aaa", fontSize: "12px", marginTop: "4px" }}
-                >
-                  Smart finds your place anywhere in the script, so you can
-                  rephrase, skip or go back. Classic follows word by word and
-                  uses the lookahead above.
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Night mode: {nightMode ? "On" : "Off"} (N)
-                </label>
-                <button
-                  onClick={() => setNightMode(!nightMode)}
-                  style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid #555",
-                    background: nightMode ? "#5d4037" : "#37474f",
-                    color: "white",
-                    cursor: "pointer",
-                  }}
-                  aria-label="Toggle night mode"
-                >
-                  {nightMode ? "Turn off" : "Turn on"}
-                </button>
-                <label
-                  style={{ color: "#ccc", display: "block", margin: "10px 0 4px", fontSize: "13px" }}
-                >
-                  Brightness: {Math.round(nightBrightness * 100)}%
-                  <input
-                    type="range"
-                    min="0.05"
-                    max="1"
-                    step="0.05"
-                    value={nightBrightness}
-                    onChange={(e) => setNightBrightness(Number(e.target.value))}
-                    style={{ display: "block", width: "100%", marginTop: "4px" }}
-                  />
-                </label>
-                <label
-                  style={{ color: "#ccc", display: "block", margin: "10px 0 4px", fontSize: "13px" }}
-                >
-                  Lit lines around your position:{" "}
-                  {nightFocusLines ? nightFocusLines : "All"}
-                  <input
-                    type="range"
-                    min="0"
-                    max="9"
-                    step="1"
-                    value={nightFocusLines}
-                    onChange={(e) => setNightFocusLines(Number(e.target.value))}
-                    style={{ display: "block", width: "100%", marginTop: "4px" }}
-                  />
-                </label>
-                <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
-                  {Object.entries(NIGHT_TINTS).map(([key, tint]) => (
-                    <button
-                      key={key}
-                      onClick={() => setNightTint(key)}
-                      aria-pressed={nightTint === key}
-                      style={{
-                        flex: 1,
-                        padding: "6px",
-                        borderRadius: "6px",
-                        border: `1px solid ${nightTint === key ? "white" : "#555"}`,
-                        background: "transparent",
-                        color: `rgb(${tint.rgb.join(",")})`,
-                        cursor: "pointer",
-                        fontSize: "13px",
-                      }}
-                    >
-                      {tint.label}
-                    </button>
-                  ))}
-                </div>
-                <div
-                  style={{ color: "#aaa", fontSize: "12px", marginTop: "6px" }}
-                >
-                  Controls appear when you move the pointer. A browser cannot
-                  change the screen's backlight, so also turn down your display
-                  brightness and use fullscreen (F).
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Co-host lines: {skipCoHostLines ? "Skip" : "Off"}
-                </label>
-                <button
-                  onClick={() => setSkipCoHostLines(!skipCoHostLines)}
-                  style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid #555",
-                    background: skipCoHostLines ? "#2e7d32" : "#37474f",
-                    color: "white",
-                    cursor: "pointer",
-                  }}
-                  aria-label="Toggle co-host line skipping"
-                  title='Lines starting with ">>" or "@Name:" are dimmed and voice tracking jumps over them'
-                >
-                  {skipCoHostLines ? "Enabled" : "Enable"}
-                </button>
-                <div
-                  style={{ color: "#aaa", fontSize: "12px", marginTop: "4px" }}
-                >
-                  Start a line with &gt;&gt; or @Name: to mark it as another
-                  speaker's — it shows dimmed and voice tracking skips it
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Text opacity: {Math.round(textOpacity * 100)}%
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue =
-                      Math.round((0.2 + percentage * (1 - 0.2)) * 20) / 20;
-                    setTextOpacity(Math.max(0.2, Math.min(1, newValue)));
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((textOpacity - 0.2) / (1 - 0.2)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = textOpacity;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 1;
-                      const minValue = 0.2;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue =
-                          Math.round((startValue + deltaValue) * 20) / 20;
-                        setTextOpacity(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Aim opacity: {Math.round(aimOpacity * 100)}%
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue =
-                      Math.round((0 + percentage * (1 - 0)) * 20) / 20;
-                    setAimOpacity(Math.max(0, Math.min(1, newValue)));
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((aimOpacity - 0) / (1 - 0)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = aimOpacity;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 1;
-                      const minValue = 0;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue =
-                          Math.round((startValue + deltaValue) * 20) / 20;
-                        setAimOpacity(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Paragraph highlight opacity:{" "}
-                  {Math.round(paragraphHighlightOpacity * 100)}%
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue =
-                      Math.round((0 + percentage * (0.6 - 0)) * 50) / 50;
-                    setParagraphHighlightOpacity(
-                      Math.max(0, Math.min(0.6, newValue))
-                    );
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `${
-                        ((paragraphHighlightOpacity - 0) / (0.6 - 0)) * 100
-                      }%`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = paragraphHighlightOpacity;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 0.6;
-                      const minValue = 0;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue =
-                          Math.round((startValue + deltaValue) * 50) / 50;
-                        setParagraphHighlightOpacity(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Operation buttons opacity: {Math.round(uiOpacity * 100)}%
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue =
-                      Math.round((0.2 + percentage * (1 - 0.2)) * 20) / 20;
-                    setUiOpacity(Math.max(0.2, Math.min(1, newValue)));
-                  }}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((uiOpacity - 0.2) / (1 - 0.2)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      const startX = e.clientX;
-                      const startValue = uiOpacity;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 1;
-                      const minValue = 0.2;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue =
-                          Math.round((startValue + deltaValue) * 20) / 20;
-                        setUiOpacity(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Aim indicator: {showAim ? "On" : "Off"}
-                </label>
-                <button
-                  onClick={() => setShowAim(!showAim)}
-                  style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid #555",
-                    background: showAim ? "#2e7d32" : "#37474f",
-                    color: "white",
-                    cursor: "pointer",
-                    marginBottom: "10px",
-                  }}
-                  aria-label="Toggle Aim Indicator"
-                >
-                  {showAim ? "Disable" : "Enable"}
-                </button>
-                <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
-                  <div style={{ flex: 1 }}>
-                    <label
-                      style={{
-                        color: "white",
-                        display: "block",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      Marker style
-                    </label>
-                    <div style={{ display: "flex", gap: "6px" }}>
-                      {[
-                        ["crosshair", "Crosshair"],
-                        ["dot", "Dot"],
-                        ["frame", "Frame"],
-                      ].map(([value, label]) => (
-                        <button
-                          key={value}
-                          onClick={() => setAimStyle(value)}
-                          aria-label={`Marker style: ${label}`}
-                          aria-pressed={aimStyle === value}
-                          style={{
-                            flex: 1,
-                            padding: "8px 4px",
-                            borderRadius: "6px",
-                            border:
-                              aimStyle === value
-                                ? "1px solid #90caf9"
-                                : "1px solid #555",
-                            background:
-                              aimStyle === value ? "#1565c0" : "#37474f",
-                            color: "white",
-                            cursor: "pointer",
-                            fontSize: "12px",
-                          }}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label
-                      style={{
-                        color: "white",
-                        display: "block",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      Marker color
-                    </label>
-                    <div style={{ display: "flex", gap: "6px" }}>
-                      {[
-                        ["#ffeb3b", "Yellow"],
-                        ["#2196f3", "Blue"],
-                        ["#f44336", "Red"],
-                        ["#4caf50", "Green"],
-                        ["#ffffff", "White"],
-                      ].map(([value, label]) => (
-                        <button
-                          key={value}
-                          onClick={() => setAimColor(value)}
-                          title={label}
-                          aria-label={`Marker color: ${label}`}
-                          aria-pressed={aimColor === value}
-                          style={{
-                            flex: 1,
-                            height: "34px",
-                            borderRadius: "6px",
-                            border:
-                              aimColor === value
-                                ? "2px solid white"
-                                : "1px solid #555",
-                            background: value,
-                            cursor: "pointer",
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: "10px" }}>
-                  <div style={{ flex: 1 }}>
-                    <label
-                      style={{
-                        color: "white",
-                        display: "block",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      Horizontal offset: {aimOffsetX}px
-                    </label>
-                    <div
-                      className="custom-slider"
-                      onClick={(e) => {
-                        if (e.target.classList.contains("custom-slider-thumb"))
-                          return;
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const x = e.clientX - rect.left;
-                        const percentage = x / rect.width;
-                        const newValue = Math.round(
-                          -400 + percentage * (400 - -400)
-                        );
-                        setAimOffsetX(Math.max(-400, Math.min(400, newValue)));
-                      }}
-                    >
-                      <div className="custom-slider-track" />
-                      <div
-                        className="custom-slider-thumb"
-                        style={{
-                          left: `calc(${
-                            ((aimOffsetX - -400) / (400 - -400)) * 100
-                          }% - 8px)`,
-                        }}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          const startX = e.clientX;
-                          const startValue = aimOffsetX;
-                          const rect =
-                            e.currentTarget.parentElement.getBoundingClientRect();
-                          const maxValue = 400;
-                          const minValue = -400;
-
-                          const handleMouseMove = (moveEvent) => {
-                            const deltaX = moveEvent.clientX - startX;
-                            const deltaPercentage = deltaX / rect.width;
-                            const deltaValue =
-                              deltaPercentage * (maxValue - minValue);
-                            const newValue = Math.round(
-                              startValue + deltaValue
-                            );
-                            setAimOffsetX(
-                              Math.max(minValue, Math.min(maxValue, newValue))
-                            );
-                          };
-
-                          const handleMouseUp = () => {
-                            document.removeEventListener(
-                              "mousemove",
-                              handleMouseMove
-                            );
-                            document.removeEventListener(
-                              "mouseup",
-                              handleMouseUp
-                            );
-                          };
-
-                          document.addEventListener(
-                            "mousemove",
-                            handleMouseMove
-                          );
-                          document.addEventListener("mouseup", handleMouseUp);
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label
-                      style={{
-                        color: "white",
-                        display: "block",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      Vertical offset: {aimOffsetY}px
-                    </label>
-                    <div
-                      className="custom-slider"
-                      onClick={(e) => {
-                        if (e.target.classList.contains("custom-slider-thumb"))
-                          return;
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const x = e.clientX - rect.left;
-                        const percentage = x / rect.width;
-                        const newValue = Math.round(
-                          -300 + percentage * (300 - -300)
-                        );
-                        setAimOffsetY(Math.max(-300, Math.min(300, newValue)));
-                      }}
-                    >
-                      <div className="custom-slider-track" />
-                      <div
-                        className="custom-slider-thumb"
-                        style={{
-                          left: `calc(${
-                            ((aimOffsetY - -300) / (300 - -300)) * 100
-                          }% - 8px)`,
-                        }}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          const startX = e.clientX;
-                          const startValue = aimOffsetY;
-                          const rect =
-                            e.currentTarget.parentElement.getBoundingClientRect();
-                          const maxValue = 300;
-                          const minValue = -300;
-
-                          const handleMouseMove = (moveEvent) => {
-                            const deltaX = moveEvent.clientX - startX;
-                            const deltaPercentage = deltaX / rect.width;
-                            const deltaValue =
-                              deltaPercentage * (maxValue - minValue);
-                            const newValue = Math.round(
-                              startValue + deltaValue
-                            );
-                            setAimOffsetY(
-                              Math.max(minValue, Math.min(maxValue, newValue))
-                            );
-                          };
-
-                          const handleMouseUp = () => {
-                            document.removeEventListener(
-                              "mousemove",
-                              handleMouseMove
-                            );
-                            document.removeEventListener(
-                              "mouseup",
-                              handleMouseUp
-                            );
-                          };
-
-                          document.addEventListener(
-                            "mousemove",
-                            handleMouseMove
-                          );
-                          document.addEventListener("mouseup", handleMouseUp);
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    setAimOffsetX(0);
-                    setAimOffsetY(0);
-                  }}
-                  style={{
-                    width: "100%",
-                    padding: "8px 12px",
-                    borderRadius: "6px",
-                    border: "1px solid #555",
-                    background: "#37474f",
-                    color: "white",
-                    cursor: "pointer",
-                    marginTop: "10px",
-                    fontSize: "14px",
-                    fontWeight: "500",
-                  }}
-                  title="Reset aim indicator to center"
-                >
-                  Reset to Center
-                </button>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  "Listening" indicator:{" "}
-                  {showListeningIndicator ? "Visible" : "Hidden"}
-                </label>
-                <button
-                  onClick={() =>
-                    setShowListeningIndicator(!showListeningIndicator)
-                  }
-                  style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    borderRadius: "8px",
-                    border: "1px solid #555",
-                    background: showListeningIndicator ? "#2e7d32" : "#37474f",
-                    color: "white",
-                    cursor: "pointer",
-                  }}
-                  aria-label="Toggle Listening Indicator"
-                  title="Hide the red 'Listening...' pill while recording — the mic button still shows red when active"
-                >
-                  {showListeningIndicator ? "Hide while recording" : "Show"}
-                </button>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Text centering offset (top/bottom): {centerPaddingVh}vh
-                </label>
-                <div
-                  className="custom-slider"
-                  onClick={(e) => {
-                    if (e.target.classList.contains("custom-slider-thumb"))
-                      return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    const newValue = Math.round(20 + percentage * (60 - 20));
-                    setCenterPaddingVh(Math.max(20, Math.min(60, newValue)));
-                  }}
-                  onMouseDown={() => setShowCenterLine(true)}
-                  onMouseUp={() => setShowCenterLine(false)}
-                >
-                  <div className="custom-slider-track" />
-                  <div
-                    className="custom-slider-thumb"
-                    style={{
-                      left: `calc(${
-                        ((centerPaddingVh - 20) / (60 - 20)) * 100
-                      }% - 8px)`,
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setShowCenterLine(true);
-                      const startX = e.clientX;
-                      const startValue = centerPaddingVh;
-                      const rect =
-                        e.currentTarget.parentElement.getBoundingClientRect();
-                      const maxValue = 60;
-                      const minValue = 20;
-
-                      const handleMouseMove = (moveEvent) => {
-                        const deltaX = moveEvent.clientX - startX;
-                        const deltaPercentage = deltaX / rect.width;
-                        const deltaValue =
-                          deltaPercentage * (maxValue - minValue);
-                        const newValue = Math.round(startValue + deltaValue);
-                        setCenterPaddingVh(
-                          Math.max(minValue, Math.min(maxValue, newValue))
-                        );
-                      };
-
-                      const handleMouseUp = () => {
-                        setShowCenterLine(false);
-                        document.removeEventListener(
-                          "mousemove",
-                          handleMouseMove
-                        );
-                        document.removeEventListener("mouseup", handleMouseUp);
-                      };
-
-                      document.addEventListener("mousemove", handleMouseMove);
-                      document.addEventListener("mouseup", handleMouseUp);
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Background color
-                </label>
-                <input
-                  type="color"
-                  value={bgColor}
-                  onChange={(e) => setBgColor(e.target.value)}
-                  style={{ width: "100%", height: "40px", cursor: "pointer" }}
-                />
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Text color
-                </label>
-                <input
-                  type="color"
-                  value={textColor}
-                  onChange={(e) => setTextColor(e.target.value)}
-                  style={{ width: "100%", height: "40px", cursor: "pointer" }}
-                />
-              </div>
-
-              <div style={{ marginBottom: "20px" }}>
-                <label
-                  style={{
-                    color: "white",
-                    display: "block",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Highlight color
-                </label>
-                <input
-                  type="color"
-                  value={highlightColor}
-                  onChange={(e) => setHighlightColor(e.target.value)}
-                  style={{ width: "100%", height: "40px", cursor: "pointer" }}
-                />
-              </div>
-            </>
+            <SettingsPanel
+              tab={settingsTab}
+              onTabChange={setSettingsTab}
+              values={{
+                fontSize,
+                lineHeight,
+                paragraphSpacingPx,
+                sidePaddingVw,
+                textAlignStyle,
+                centerPaddingVh,
+                bgColor,
+                textColor,
+                highlightColor,
+                textOpacity,
+                paragraphHighlightOpacity,
+                uiOpacity,
+                language,
+                recognitionEngine,
+                smartMode,
+                lookaheadWindow,
+                skipCoHostLines,
+                speakBrackets,
+                scrollSpeed,
+                nightMode,
+                nightBrightness,
+                nightFocusLines,
+                nightTint,
+                mirrorX,
+                showAim,
+                aimStyle,
+                aimColor,
+                aimOpacity,
+                aimOffsetX,
+                aimOffsetY,
+                showListeningIndicator,
+                showStats,
+                statsCorner,
+                showTranscript,
+              }}
+              set={{
+                fontSize: setFontSize,
+                lineHeight: setLineHeight,
+                paragraphSpacingPx: setParagraphSpacingPx,
+                sidePaddingVw: setSidePaddingVw,
+                textAlignStyle: setTextAlignStyle,
+                centerPaddingVh: setCenterPaddingVh,
+                bgColor: setBgColor,
+                textColor: setTextColor,
+                highlightColor: setHighlightColor,
+                textOpacity: setTextOpacity,
+                paragraphHighlightOpacity: setParagraphHighlightOpacity,
+                uiOpacity: setUiOpacity,
+                language: setLanguage,
+                recognitionEngine: setRecognitionEngine,
+                smartMode: setSmartMode,
+                lookaheadWindow: setLookaheadWindow,
+                skipCoHostLines: setSkipCoHostLines,
+                speakBrackets: setSpeakBrackets,
+                scrollSpeed: setScrollSpeed,
+                nightMode: setNightMode,
+                nightBrightness: setNightBrightness,
+                nightFocusLines: setNightFocusLines,
+                nightTint: setNightTint,
+                mirrorX: setMirrorX,
+                showAim: setShowAim,
+                aimStyle: setAimStyle,
+                aimColor: setAimColor,
+                aimOpacity: setAimOpacity,
+                aimOffsetX: setAimOffsetX,
+                aimOffsetY: setAimOffsetY,
+                showListeningIndicator: setShowListeningIndicator,
+                showStats: setShowStats,
+                statsCorner: setStatsCorner,
+                showTranscript: setShowTranscript,
+              }}
+              languages={languagesList}
+              autoScrollWpm={(speed) =>
+                Math.round(60000 / computeAutoIntervalMs(speed))
+              }
+              hasStoredModel={hasStoredModel}
+              onChooseLocalEngine={() => {
+                setLocalStatus({ state: "idle" });
+                setShowLocalDialog(true);
+              }}
+              onRemoveLocalEngine={removeLocalEngine}
+              onShowCenterLine={setShowCenterLine}
+              onResetSection={(keys) =>
+                applySettings(
+                  Object.fromEntries(keys.map((key) => [key, defaultSettings[key]]))
+                )
+              }
+              onResetAll={() => setShowResetConfirm(true)}
+            />
           )}
         </div>
       )}
