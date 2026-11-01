@@ -1,6 +1,6 @@
 {
   "name": "smart-teleprompter",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "type": "module",
   "private": true,
   "description": "A free, open-source teleprompter application that uses real-time speech recognition to automatically follow your voice as you read",
@@ -57,6 +57,14 @@
     }
   ],
   "dependencies": {
+    "@tiptap/core": "^3.32.2",
+    "@tiptap/extension-highlight": "^3.32.2",
+    "@tiptap/extension-table": "^3.32.2",
+    "@tiptap/markdown": "^3.32.2",
+    "@tiptap/pm": "^3.32.2",
+    "@tiptap/react": "^3.32.2",
+    "@tiptap/starter-kit": "^3.32.2",
+    "marked": "^17.0.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },

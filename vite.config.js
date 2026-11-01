@@ -5,6 +5,8 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
+  // GitHub Pages serves from /<repository>/ (set by the deploy workflow).
+  base: process.env.BASE_PATH || "/",
   build: {
     rollupOptions: {
       input: {

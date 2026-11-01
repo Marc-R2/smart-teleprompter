@@ -5,6 +5,30 @@ All notable changes to Smart Teleprompter will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-11-01
+
+### Added
+
+- 🧠 **Smart Voice Tracking**: Aligns what was said against the whole script, so rephrasing, skipping and jumping back all work, including with repeated passages. Default mode; classic tracking stays available (`T`)
+- ✨ **Read Highlighting**: Soft highlight for what was just said, a fainter one for everything already read, which also remains after jumping back
+- 📝 **Markdown Scripts**: Headings, emphasis, highlight, lists, tables and dividers. Existing plain-text scripts keep their line breaks
+- 🖊️ **Rich Text Editor**: Formatting toolbar, Markdown paste and a Markdown source view. Falls back to a plain text field if it cannot load
+- 🙊 **Unspoken Notes**: Code blocks and inline code are shown but never tracked
+- 🌙 **Night Mode** (`N`): Dim tinted text on pure black, a lit band around the reading position and controls that hide themselves
+- 🚀 **GitHub Pages Deployment**: Workflow included; the app and service worker now work from a subfolder
+
+### Changed
+
+- 🔗 **Share Links**: Scripts now travel inside the link, without server or expiry. Old `?share=` links keep working on Cloudflare
+
+### Fixed
+
+- 🎙️ Silence no longer restarts recognition every few seconds, which lost the first words after a pause
+- 🎙️ A blocked or missing microphone now shows a message instead of retrying forever; language changes reach a running session
+- 🌍 Words in Cyrillic, Chinese, Japanese, Korean, Arabic and Hindi are now matched; they were stripped before comparing
+- ⌨️ Browser shortcuts such as Cmd+R no longer trigger app shortcuts
+- 🗂️ Clicking in the Add Script dialog no longer closes the editor behind it
+
 ## [2.2.0] - 2026-07-02
 
 ### Added

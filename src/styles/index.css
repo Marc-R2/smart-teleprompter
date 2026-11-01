@@ -119,3 +119,208 @@ div[style*="overflowX: auto"]::-webkit-scrollbar-thumb:hover {
     justify-content: center !important;
   }
 }
+
+/* Night mode: a light scrollbar would be the brightest thing on screen */
+html:has(.tp-night),
+body:has(.tp-night) {
+  overflow: hidden;
+}
+
+.tp-night div {
+  scrollbar-width: none;
+}
+
+.tp-night div::-webkit-scrollbar {
+  display: none;
+}
+
+/* Script editor (Tailwind's reset removes all default text styling) */
+.tp-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tp-editor-group {
+  display: flex;
+  border: 1px solid #444;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tp-editor-toolbar button {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 2px 8px;
+  background: #1a1a1a;
+  color: #ddd;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tp-editor-toolbar button:hover {
+  background: #2c2c2c;
+}
+
+.tp-editor-toolbar button[aria-pressed="true"] {
+  background: #ffeb3b;
+  color: #000;
+}
+
+.tp-editor-toolbar .tp-editor-source {
+  margin-left: auto;
+  border: 1px solid #444;
+  border-radius: 6px;
+}
+
+.tp-editor .ProseMirror,
+.tp-editor-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--tp-editor-min-height, 40vh);
+  padding: 12px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: #222;
+  color: white;
+  font-size: 15px;
+  line-height: 1.55;
+  outline: none;
+  white-space: pre-wrap;
+}
+
+.tp-editor .ProseMirror:focus,
+.tp-editor-textarea:focus {
+  border-color: #999;
+}
+
+.tp-editor-textarea {
+  display: block;
+  font-family: monospace;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.tp-editor .ProseMirror p {
+  margin: 0 0 0.6em;
+}
+
+.tp-editor .ProseMirror h1 {
+  margin: 0.6em 0 0.3em;
+  font-size: 1.6em;
+  font-weight: 700;
+}
+
+.tp-editor .ProseMirror h2 {
+  margin: 0.6em 0 0.3em;
+  font-size: 1.35em;
+  font-weight: 700;
+}
+
+.tp-editor .ProseMirror h3 {
+  margin: 0.6em 0 0.3em;
+  font-size: 1.15em;
+  font-weight: 700;
+}
+
+.tp-editor .ProseMirror ul {
+  margin: 0 0 0.6em;
+  padding-left: 1.5em;
+  list-style: disc;
+}
+
+.tp-editor .ProseMirror ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.5em;
+  list-style: decimal;
+}
+
+.tp-editor .ProseMirror li p {
+  margin: 0;
+}
+
+.tp-editor .ProseMirror blockquote {
+  margin: 0 0 0.6em;
+  padding-left: 0.8em;
+  border-left: 3px solid #777;
+  color: #aaa;
+  font-style: italic;
+}
+
+.tp-editor .ProseMirror blockquote::before {
+  content: "Co-host";
+  display: block;
+  color: #888;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.tp-editor .ProseMirror blockquote blockquote {
+  padding-left: 0;
+  border-left: none;
+}
+
+.tp-editor .ProseMirror blockquote blockquote::before {
+  content: none;
+}
+
+.tp-editor .ProseMirror pre {
+  margin: 0 0 0.6em;
+  padding: 0.5em 0.8em;
+  border-left: 3px solid #ffd54f;
+  border-radius: 4px;
+  background: #161616;
+  color: #bbb;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.tp-editor .ProseMirror pre::before {
+  content: "Not spoken";
+  display: block;
+  color: #ffd54f;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.tp-editor .ProseMirror :not(pre) > code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #161616;
+  color: #ffd54f;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.tp-editor .ProseMirror mark {
+  background: rgba(255, 235, 59, 0.35);
+  color: inherit;
+}
+
+.tp-editor .ProseMirror a {
+  text-decoration: underline;
+}
+
+.tp-editor .ProseMirror hr {
+  margin: 0.8em 0;
+  border: none;
+  border-top: 1px solid #666;
+}
+
+.tp-editor .ProseMirror table {
+  width: 100%;
+  margin: 0 0 0.6em;
+  border-collapse: collapse;
+}
+
+.tp-editor .ProseMirror th,
+.tp-editor .ProseMirror td {
+  padding: 4px 8px;
+  border: 1px solid #555;
+  text-align: left;
+}
+
+.tp-editor .ProseMirror th {
+  background: #2c2c2c;
+}

@@ -15,10 +15,13 @@
  *  - other same-origin GET (icons, manifest, images) -> stale-while-revalidate
  */
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const CACHE_NAME = `tp-cache-${CACHE_VERSION}`;
 
-const PRECACHE_URLS = ["/", "/app.html", "/manifest.json", "/logo.svg"];
+// The app may be hosted in a subfolder (GitHub Pages), so nothing assumes "/".
+const BASE_PATH = new URL("./", self.location).pathname;
+
+const PRECACHE_URLS = ["./", "app.html", "manifest.json", "logo.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -48,7 +51,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // never touch cross-origin
-  if (url.pathname.startsWith("/api/")) return; // never cache API calls
+  if (url.pathname.startsWith(`${BASE_PATH}api/`)) return; // never cache API calls
 
   // 1) Navigations / HTML: network-first, cache fallback for offline
   if (request.mode === "navigate" || url.pathname.endsWith(".html")) {
@@ -62,14 +65,14 @@ self.addEventListener("fetch", (event) => {
         .catch(() =>
           caches
             .match(request)
-            .then((cached) => cached || caches.match("/app.html"))
+            .then((cached) => cached || caches.match(`${BASE_PATH}app.html`))
         )
     );
     return;
   }
 
   // 2) Hashed build assets: cache-first (immutable by construction)
-  if (url.pathname.startsWith("/assets/")) {
+  if (url.pathname.startsWith(`${BASE_PATH}assets/`)) {
     event.respondWith(
       caches.match(request).then(
         (cached) =>

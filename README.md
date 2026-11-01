@@ -34,11 +34,26 @@ A free, open-source teleprompter application that uses real-time speech recognit
 - **Aim marker styles** — crosshair, dot, or camera-frame in 5 colors
 - **Hideable "Listening" indicator** for clean on-camera recording
 
+### 🧠 Smart Tracking, Markdown & Night Mode
+
+- **Smart voice tracking** — finds your place anywhere in the script, so you can
+  rephrase, leave out passages or jump back. Repeated passages are told apart
+  by context and distance. What you just said is softly highlighted; parts you
+  already read stay marked even fainter, also after jumping back
+- **Markdown scripts** — headings, bold, italic, underline, strikethrough,
+  highlight, lists, tables and dividers, edited in a rich text editor or as
+  Markdown source
+- **Unspoken notes** — code blocks and `inline code` stay visible but are never
+  tracked; quotes (`>>`) and `@Name:` lines mark a co-host's part
+- **Night mode** (`N`) — dim amber, red or gray text on pure black, with only a
+  few lines around your position lit and all controls hidden until you move the
+  pointer. Disturbs others as little as possible in a dark room
+
 ### 🔗 Sharing & Offline
 
-- **Share scripts via link** — send any saved script to another device with a
-  short link (no account; links auto-expire after 30 days). Powered by a
-  Cloudflare Pages Function + KV
+- **Share scripts via link** — send any saved script to another device. The
+  script travels compressed inside the link itself: no account, no server, no
+  expiry
 - **Installable PWA** — install from the browser for a standalone app window
 - **Offline support** — the app shell is cached by a service worker;
   auto-scroll mode works with no internet at all
@@ -213,13 +228,18 @@ The `dist/` output is ready for any static hosting. Includes:
 
 Deploy to Cloudflare Pages, Vercel, Netlify, or any static host.
 
+### GitHub Pages
+
+`.github/workflows/deploy-pages.yml` tests, builds and deploys every push to
+`main`. One-time setup: repository **Settings → Pages → Source: GitHub Actions**.
+The app is then served from `https://<user>.github.io/<repository>/app.html`.
+To build for a subfolder yourself, set `BASE_PATH=/<repository>/`.
+
 ### Cloudflare extras (optional, free tier)
 
-- **Script sharing** (`functions/api/share/`) needs a KV namespace bound to
-  the Pages project as `SHARES` (Workers & Pages → project → Settings →
-  Bindings → Add → KV namespace, variable name `SHARES`). Without the
-  binding the app works normally — the Share button just reports that
-  sharing isn't configured.
+- **Old share links** (`?share=<id>`) are still served by
+  `functions/api/share/` with a KV namespace bound as `SHARES`. New links do not
+  need it.
 - **Analytics**: enable Cloudflare Web Analytics for the Pages project
   (Metrics tab), or paste your beacon token in `index.html`/`app.html`
   where marked. Cookieless — no consent banner needed.

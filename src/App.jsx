@@ -1,4 +1,21 @@
-import { useState, useEffect, useLayoutEffect, useRef, memo } from "react";
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useMemo,
+  useCallback,
+  useDeferredValue,
+  memo,
+} from "react";
+import ScriptEditor, { preloadEditor } from "./components/ScriptEditor";
+import {
+  buildScriptModel,
+  normalizeToken,
+  tokenizeSpeech,
+} from "./lib/scriptModel";
+import { createSmartTracker } from "./lib/smartTracker";
+import { decodeShareHash, encodeShareHash, isShareHash } from "./lib/shareLink";
 
 // Inline SVG icons (Heroicons v2.1.1 outline, MIT). Inlined instead of
 // loading from unpkg.com so the UI has zero external requests, renders
@@ -18,6 +35,7 @@ const ICON_PATHS = {
     "M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75",
   "arrows-pointing-in":
     "M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25",
+  moon: "M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z",
   "arrows-pointing-out":
     "M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15",
 };
@@ -40,23 +58,128 @@ function Icon({ name }) {
   );
 }
 
-// Co-host speaker markers (GitHub #2): a line starting with ">>" or "@Name:"
-// belongs to another speaker. It renders dimmed and voice tracking skips it,
-// so shared scripts auto-jump to the presenter's next line no matter how long
-// the co-host's part is.
-const CO_HOST_LINE_RE = /^\s*(>>|@[^\s:]{1,30}:)/;
+const HEADING_SIZES = { 1: "1.5em", 2: "1.3em", 3: "1.15em" };
+
+// Night tints are multiplied over the whole page. Red and amber light disturb
+// other people and dark-adapted eyes the least.
+const NIGHT_TINTS = {
+  amber: { label: "Amber", rgb: [255, 170, 70] },
+  red: { label: "Red", rgb: [255, 70, 50] },
+  neutral: { label: "Gray", rgb: [255, 255, 255] },
+};
+
+function withAlpha(hexColor, alpha) {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hexColor);
+  if (!match) return hexColor;
+  const [r, g, b] = match.slice(1).map((part) => parseInt(part, 16));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function savedSetting(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem("tp_settings_v1"))?.[key];
+    return value ?? fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function wordDecoration(marks) {
+  const parts = [];
+  if (marks?.underline || marks?.link) parts.push("underline");
+  if (marks?.strike) parts.push("line-through");
+  return parts.join(" ") || "none";
+}
+
+// Everything that can sit on a line: spoken words and unspoken inline notes.
+function LineItems({
+  items,
+  activeIndex,
+  spanFrom,
+  spanTo,
+  readWords,
+  smartMode,
+  showHighlight,
+  highlightColor,
+  textColor,
+  onWordClick,
+}) {
+  return items.map((item, position) => {
+    if (item.word === undefined) {
+      return (
+        <span
+          key={`note-${position}`}
+          style={{
+            opacity: 0.5,
+            fontFamily: "monospace",
+            fontSize: "0.75em",
+          }}
+        >
+          {item.note}{" "}
+        </span>
+      );
+    }
+    const { index, marks } = item;
+    const isCurrent = index === activeIndex;
+    let background = marks?.highlight
+      ? withAlpha(highlightColor, 0.18)
+      : "transparent";
+    let color = textColor;
+    if (showHighlight) {
+      if (!smartMode) {
+        if (isCurrent) {
+          background = highlightColor;
+          color = "#000";
+        }
+      } else if (isCurrent) {
+        background = withAlpha(highlightColor, 0.42);
+      } else if (index >= spanFrom && index <= spanTo && spanFrom >= 0) {
+        background = withAlpha(highlightColor, 0.22);
+      } else if (readWords?.[index]) {
+        // Stays visible when jumping back, so read parts remain recognizable.
+        background = withAlpha(highlightColor, 0.09);
+      }
+    }
+    return (
+      <span
+        key={index}
+        id={`word-${index}`}
+        style={{
+          backgroundColor: background,
+          color,
+          borderRadius: "2px",
+          // 0.1s (was 0.2s): user feedback said the word marking felt
+          // sluggish — most of that was this transition, not recognition
+          transition: "background-color 0.1s ease, color 0.1s ease",
+          fontWeight: marks?.bold ? 700 : "normal",
+          fontStyle: marks?.italic ? "italic" : undefined,
+          textDecoration: wordDecoration(marks),
+          cursor: "pointer",
+        }}
+        onClick={() => onWordClick(index)}
+      >
+        {item.word}
+        {item.space ? " " : ""}
+      </span>
+    );
+  });
+}
 
 // One rendered line of the script, memoized.
 // Why: speech recognition fires a result every ~100-300ms and each one updates
 // currentWordIndex. Before, that re-rendered EVERY word span in the script
-// (thousands of spans for long scripts). With memo + an `activeIndex` that is
-// -1 for lines not containing the current word, only the line losing the
-// highlight and the line gaining it re-render. Large scripts stay smooth.
+// (thousands of spans for long scripts). With memo + per-line primitive props
+// that are -1 for lines not containing the current position, only lines whose
+// highlight actually changes re-render. Large scripts stay smooth.
 const TeleprompterLine = memo(function TeleprompterLine({
-  words,
+  line,
   lineIdx,
-  lineStart,
   activeIndex, // global index of the current word if it is in this line, else -1
+  spanFrom, // part of this line that was just recognized, or -1
+  spanTo,
+  readWords, // mutated in place; readVersion announces changes for this line
+  readVersion: _readVersion,
+  smartMode,
   isCoHost, // dimmed, skipped by voice tracking
   showHighlight,
   highlightColor,
@@ -66,12 +189,64 @@ const TeleprompterLine = memo(function TeleprompterLine({
   onWordClick,
 }) {
   const isCurrentLine = activeIndex >= 0;
+  const marginBottom = line.gapAfter ? "0.7em" : `${Math.max(0, paragraphSpacingPx / 4)}px`;
+  const indent = `${(line.depth || 0) * 1.2}em`;
+
+  if (line.kind === "hr") {
+    return (
+      <div id={`line-${lineIdx}`} style={{ margin: "0.5em 8px 0.9em" }}>
+        <hr
+          style={{
+            border: "none",
+            borderTop: "1px solid currentColor",
+            opacity: 0.35,
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (line.kind === "code") {
+    return (
+      <div
+        id={`line-${lineIdx}`}
+        style={{
+          margin: `0.2em 8px ${marginBottom}`,
+          marginLeft: `calc(8px + ${indent})`,
+          padding: "0.4em 0.7em",
+          borderLeft: `3px solid ${withAlpha(highlightColor, 0.5)}`,
+          background: "rgba(127, 127, 127, 0.1)",
+          borderRadius: "4px",
+          fontFamily: "monospace",
+          fontSize: "0.6em",
+          lineHeight: 1.4,
+          opacity: 0.65,
+        }}
+      >
+        {line.text}
+      </div>
+    );
+  }
+
+  const itemProps = {
+    activeIndex,
+    spanFrom,
+    spanTo,
+    readWords,
+    smartMode,
+    showHighlight,
+    highlightColor,
+    textColor,
+    onWordClick,
+  };
+
   return (
     <div
       id={`line-${lineIdx}`}
       style={{
         padding: "4px 8px",
-        margin: `${Math.max(0, paragraphSpacingPx / 4)}px 0`,
+        margin: `${Math.max(0, paragraphSpacingPx / 4)}px 0 ${marginBottom}`,
+        marginLeft: indent,
         borderRadius: "6px",
         backgroundColor: isCurrentLine
           ? `rgba(255, 235, 59, ${paragraphHighlightOpacity})`
@@ -79,32 +254,32 @@ const TeleprompterLine = memo(function TeleprompterLine({
         outline: isCurrentLine ? `1px dashed ${highlightColor}33` : "none",
         opacity: isCoHost ? 0.45 : 1,
         fontStyle: isCoHost ? "italic" : "normal",
+        fontSize: line.type === "heading" ? HEADING_SIZES[line.level] : undefined,
+        fontWeight: line.type === "heading" ? 700 : undefined,
       }}
     >
-      {words.map((word, i) => {
-        const index = lineStart + i;
-        const isCurrent = index === activeIndex;
-        return (
-          <span
-            key={index}
-            id={`word-${index}`}
-            style={{
-              backgroundColor:
-                isCurrent && showHighlight ? highlightColor : "transparent",
-              color: isCurrent && showHighlight ? "#000" : textColor,
-              borderRadius: "2px",
-              // 0.1s (was 0.2s): user feedback said the word marking felt
-              // sluggish — most of that was this transition, not recognition
-              transition: "background-color 0.1s ease, color 0.1s ease",
-              fontWeight: "normal",
-              cursor: "pointer",
-            }}
-            onClick={() => onWordClick(index)}
-          >
-            {word}{" "}
-          </span>
-        );
-      })}
+      {line.marker && (
+        <span style={{ opacity: 0.55, marginRight: "0.4em" }}>{line.marker}</span>
+      )}
+      {line.kind === "row" ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${line.cells.length}, minmax(0, 1fr))`,
+            gap: "0.8em",
+            borderBottom: "1px solid rgba(127, 127, 127, 0.4)",
+            fontWeight: line.header ? 700 : undefined,
+          }}
+        >
+          {line.cells.map((items, cellIdx) => (
+            <div key={cellIdx}>
+              <LineItems items={items} {...itemProps} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <LineItems items={line.items} {...itemProps} />
+      )}
     </div>
   );
 });
@@ -265,6 +440,8 @@ S - Script editor
 B - My Scripts library
 F - Fullscreen mode
 M - Mirror text horizontally
+N - Night mode
+T - Smart tracking on/off
 ? - Show keyboard shortcuts
 
 KEY FEATURES
@@ -323,7 +500,25 @@ Happy recording!`);
   const [showListeningIndicator, setShowListeningIndicator] = useState(true);
   // Co-host lines (">>" / "@Name:") — dim them and let voice tracking skip them
   const [skipCoHostLines, setSkipCoHostLines] = useState(true);
-  const [lineIsCoHost, setLineIsCoHost] = useState([]);
+  // Smart tracking: finds the matching place anywhere in the script
+  const [smartMode, setSmartMode] = useState(true);
+  const [spanStart, setSpanStart] = useState(-1);
+  const [readVersions, setReadVersions] = useState([]);
+  const [micError, setMicError] = useState("");
+  // Night mode: read old values synchronously so a dark room never sees a flash
+  const [nightMode, setNightMode] = useState(() =>
+    savedSetting("nightMode", false)
+  );
+  const [nightBrightness, setNightBrightness] = useState(() =>
+    savedSetting("nightBrightness", 0.4)
+  );
+  const [nightTint, setNightTint] = useState(() =>
+    savedSetting("nightTint", "amber")
+  );
+  const [nightFocusLines, setNightFocusLines] = useState(() =>
+    savedSetting("nightFocusLines", 3)
+  );
+  const [nightChromeVisible, setNightChromeVisible] = useState(false);
   // Toolbar overflow hints (mobile): which directions have hidden icons
   const [toolbarHints, setToolbarHints] = useState({
     left: false,
@@ -377,8 +572,6 @@ Happy recording!`);
   ];
   const [paragraphHighlightOpacity, setParagraphHighlightOpacity] =
     useState(0.12);
-  const [linesWords, setLinesWords] = useState([]);
-  const [lineStartIndex, setLineStartIndex] = useState([]);
   const [showEditor, setShowEditor] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -398,14 +591,18 @@ Happy recording!`);
   const recognitionRef = useRef(null);
   const wordsRef = useRef([]);
   const normalizedWordsRef = useRef([]);
-  const linesRawRef = useRef([]);
-  const linesWordsRef = useRef([]);
   const lineStartIndexRef = useRef([]);
   const toolbarScrollRef = useRef(null);
   // Co-host markers: per-line + per-word skip flags, and a live ref for the
   // setting (refs so the speech-recognition closures always see fresh values)
   const lineIsCoHostRef = useRef([]);
   const skippableWordsRef = useRef([]);
+  const trackerRef = useRef(null);
+  const smartModeRef = useRef(true);
+  const readWordsRef = useRef(new Uint8Array(0));
+  const languageRef = useRef("en-US");
+  const micStartedAtRef = useRef(0);
+  const micRestartAttemptsRef = useRef(0);
   const skipCoHostRef = useRef(true);
   const isListeningRef = useRef(false);
   const currentWordIndexRef = useRef(-1);
@@ -464,7 +661,7 @@ Happy recording!`);
       rec.continuous = true;
       rec.interimResults = true;
       rec.lang =
-        language ||
+        languageRef.current ||
         (typeof navigator !== "undefined" && navigator.language
           ? navigator.language
           : "en-US");
@@ -473,35 +670,11 @@ Happy recording!`);
 
     rec.onstart = () => {
       recognizingRef.current = true;
+      micStartedAtRef.current = performance.now();
       micForceStoppedRef && (micForceStoppedRef.current = false);
     };
 
     rec.onresult = (event) => {
-      // Αν έχουμε ήδη transcript που τρέχει, μην περιμένεις final
-      const hasInterim =
-        event.results.length > 0 &&
-        !event.results[event.results.length - 1].isFinal;
-
-      // Πάρε πρώτα το πιο πρόσφατο interim (πιο γρήγορο)
-      let idx = event.results.length - 1;
-      const latestResult = event.results[idx];
-
-      // Χρησιμοποίησε interim αν υπάρχει, αλλιώς ψάξε για final
-      const chosen = latestResult;
-
-      const transcript =
-        chosen && chosen[0] && chosen[0].transcript ? chosen[0].transcript : "";
-
-      // Split σε tokens ΑΜΑ υπάρχει τουλάχιστον μία λέξη
-      const tokens = transcript.split(/\s+/).map(normalizeWord).filter(Boolean);
-      if (tokens.length === 0) return;
-
-      const isFinal = !!(chosen && chosen.isFinal);
-
-      // ΝΕΟΣ ΚΩΔΙΚΑΣ: Για interim results, χρησιμοποίησε μόνο την τελευταία λέξη
-      const tokensToUse =
-        !isFinal && tokens.length > 1 ? tokens.slice(-1) : tokens;
-
       // mic activity indicator
       setIsSpeaking(true);
       if (speakingTimeoutRef.current) clearTimeout(speakingTimeoutRef.current);
@@ -510,11 +683,47 @@ Happy recording!`);
         window.__lastMicResultTs = performance.now();
       } catch (_) {}
       lastMicResultTsRef.current = performance.now();
+      micRestartAttemptsRef.current = 0;
+      setMicError("");
+
+      if (smartModeRef.current && trackerRef.current) {
+        const finalTokens = [];
+        const interimTokens = [];
+        for (let r = event.resultIndex; r < event.results.length; r++) {
+          const heard = tokenizeSpeech(event.results[r][0]?.transcript);
+          (event.results[r].isFinal ? finalTokens : interimTokens).push(...heard);
+        }
+        const place = trackerRef.current.update(finalTokens, interimTokens);
+        if (place) {
+          const previous = currentWordIndexRef.current;
+          // Words left out on purpose must not count as read.
+          const readFrom =
+            place.index > previous && place.index - previous <= 12
+              ? Math.min(previous + 1, place.spanStart)
+              : place.spanStart;
+          markWordsRead(readFrom, place.index);
+          currentWordIndexRef.current = place.index;
+          setSpanStart(place.spanStart);
+          setCurrentWordIndex(place.index);
+        }
+        return;
+      }
+
+      // Classic tracking: word by word, forward only
+      let idx = event.results.length - 1;
+      const chosen = event.results[idx];
+      const tokens = tokenizeSpeech(chosen?.[0]?.transcript);
+      if (tokens.length === 0) return;
+
+      const isFinal = !!chosen.isFinal;
+
+      // Interim results only count by their newest word
+      const tokensToUse =
+        !isFinal && tokens.length > 1 ? tokens.slice(-1) : tokens;
 
       const startIndex = Math.max(currentWordIndexRef.current + 1, 0);
       const currentLine = getLineIdxForWord(currentWordIndexRef.current);
 
-      // Χρησιμοποίησε τα tokens που έχουμε υπολογίσει
       let nextIndex = findNextInLine(
         tokensToUse,
         startIndex,
@@ -535,7 +744,7 @@ Happy recording!`);
       if (nextIndex === -1) {
         const { index } = tryAdvanceByTokens(tokensToUse, startIndex, {
           maxWindow: lookaheadWindow,
-          maxSoftSkip: 2, // Πιο aggressive για αγγλικά
+          maxSoftSkip: 2,
         });
         nextIndex = index;
       }
@@ -543,34 +752,51 @@ Happy recording!`);
     };
 
     rec.onerror = (event) => {
-      console.error("Speech recognition error:", event.error);
-      if (
-        event.error === "no-speech" ||
-        event.error === "audio-capture" ||
-        event.error === "network" ||
-        event.error === "not-allowed" ||
-        event.error === "service-not-allowed"
-      ) {
-        if (isListeningRef.current && !micForceStoppedRef.current) {
-          if (micRestartTimeoutRef.current)
-            clearTimeout(micRestartTimeoutRef.current);
-          micRestartTimeoutRef.current = setTimeout(() => {
-            if (isListeningRef.current && !micForceStoppedRef.current)
-              safeRestartRecognition(300);
-          }, 0);
-        }
+      // Restarting cannot fix these, and would ask for the mic in a loop.
+      const fatal = {
+        "not-allowed":
+          "Microphone access is blocked. Allow it in the browser's site settings, then press V.",
+        "service-not-allowed":
+          "Speech recognition is blocked by this browser. Try Chrome or Edge.",
+        "audio-capture": "No microphone found. Connect one, then press V.",
+        "language-not-supported":
+          "This browser cannot recognize the selected language.",
+      }[event.error];
+      if (fatal) {
+        isListeningRef.current = false;
+        setIsListening(false);
+        hardStopRecognition();
+        setMicError(fatal);
+        return;
       }
+      if (event.error === "network") {
+        setMicError("Speech service unreachable. Retrying…");
+      } else if (event.error !== "no-speech" && event.error !== "aborted") {
+        console.error("Speech recognition error:", event.error);
+      }
+      // Everything else ends in onend, which restarts.
     };
 
     rec.onend = () => {
       recognizingRef.current = false;
       if (isListeningRef.current && !micForceStoppedRef.current) {
+        // Back off only when sessions keep dying right away. After a normal
+        // session restart at once, or the first words after a pause get lost.
+        if (performance.now() - micStartedAtRef.current > 2000) {
+          micRestartAttemptsRef.current = 0;
+        }
+        const delay = Math.min(
+          3000,
+          150 * 2 ** micRestartAttemptsRef.current
+        );
+        micRestartAttemptsRef.current += 1;
         if (micRestartTimeoutRef.current)
           clearTimeout(micRestartTimeoutRef.current);
         micRestartTimeoutRef.current = setTimeout(() => {
+          micRestartTimeoutRef.current = null;
           if (isListeningRef.current && !micForceStoppedRef.current)
-            safeRestartRecognition(150);
-        }, 0);
+            safeRestartRecognition(0);
+        }, delay);
       }
     };
 
@@ -635,6 +861,11 @@ Happy recording!`);
     aimColor: "#ffeb3b",
     showListeningIndicator: true,
     skipCoHostLines: true,
+    smartMode: true,
+    nightMode: false,
+    nightBrightness: 0.4,
+    nightTint: "amber",
+    nightFocusLines: 3,
     textOpacity: 0.8,
     aimOpacity: 1,
     uiOpacity: 0.9,
@@ -664,6 +895,11 @@ Happy recording!`);
     setAimColor(defaultSettings.aimColor);
     setShowListeningIndicator(defaultSettings.showListeningIndicator);
     setSkipCoHostLines(defaultSettings.skipCoHostLines);
+    setSmartMode(defaultSettings.smartMode);
+    setNightMode(defaultSettings.nightMode);
+    setNightBrightness(defaultSettings.nightBrightness);
+    setNightTint(defaultSettings.nightTint);
+    setNightFocusLines(defaultSettings.nightFocusLines);
     setTextOpacity(defaultSettings.textOpacity);
     setAimOpacity(defaultSettings.aimOpacity);
     setUiOpacity(defaultSettings.uiOpacity);
@@ -780,54 +1016,73 @@ Happy recording!`);
     if (script.language) setLanguage(script.language);
   };
 
-  // --- Share a script via link (Cloudflare Pages Function + KV) ---
-  // POST /api/share stores the script server-side for 30 days and returns a
-  // short id; the link opens the app on any device with ?share=<id>.
+  // --- Share a script via link ---
+  // The script travels inside the link itself (see lib/shareLink.js).
   const shareScript = async (script) => {
     if (shareBusyId) return;
     setShareBusyId(script.id);
     try {
-      const res = await fetch("/api/share", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: script.name,
-          text: script.text,
-          language: script.language || "en-US",
-        }),
+      const hash = await encodeShareHash({
+        title: script.name,
+        text: script.text,
+        language: script.language || "en-US",
       });
-      if (!res.ok) {
-        alert(
-          res.status === 503
-            ? "Sharing is not configured on this deployment yet."
-            : "Could not create the share link. Please try again."
-        );
-        return;
-      }
-      const data = await res.json();
-      const url = `${window.location.origin}/app.html?share=${data.id}`;
+      const url = `${window.location.origin}${window.location.pathname}${hash}`;
       let copied = false;
       try {
         await navigator.clipboard.writeText(url);
         copied = true;
       } catch (_) {}
       alert(
-        (copied
-          ? "Share link copied to clipboard:\n\n"
-          : "Share link (copy it manually):\n\n") +
-          url +
-          "\n\nAnyone with the link can import this script. It expires in 30 days."
+        copied
+          ? "Share link copied to clipboard. Anyone with the link can import this script."
+          : `Share link (copy it manually):\n\n${url}`
       );
     } catch (_) {
-      alert("Could not create the share link. Check your connection and try again.");
+      alert("Could not create the share link in this browser.");
     } finally {
       setShareBusyId(null);
     }
   };
 
-  // Import a script that was shared via link (?share=<id>).
+  const importSharedScript = (data) => {
+    const newScript = {
+      id: Date.now().toString(),
+      name: (data.title || "Shared script").slice(0, 100),
+      text: data.text,
+      language: data.language || "en-US",
+      savedAt: new Date().toISOString(),
+    };
+    // Functional update: the import resolves after mount, so the saved
+    // scripts state is already populated; never overwrite it blindly.
+    setSavedScripts((prev) => {
+      const updated = [newScript, ...prev].slice(0, MAX_SCRIPTS);
+      try {
+        localStorage.setItem(SCRIPTS_KEY, JSON.stringify(updated));
+      } catch (_) {}
+      return updated;
+    });
+    setText(data.text);
+    if (data.language) setLanguage(data.language);
+    alert(`Shared script "${newScript.name}" was imported and loaded.`);
+  };
+
+  // Import a script that was shared via link: #s=<script>, or ?share=<id> for
+  // links created before scripts traveled inside the link.
   useEffect(() => {
     try {
+      const hash = window.location.hash;
+      if (isShareHash(hash)) {
+        window.history.replaceState(
+          {},
+          "",
+          window.location.pathname + window.location.search
+        );
+        decodeShareHash(hash)
+          .then(importSharedScript)
+          .catch(() => alert("This share link is invalid or incomplete."));
+        return;
+      }
       const params = new URLSearchParams(window.location.search);
       const shareId = params.get("share");
       if (!shareId) return;
@@ -848,25 +1103,7 @@ Happy recording!`);
         .then((data) => {
           if (!data || typeof data.text !== "string" || !data.text.trim())
             throw new Error("empty");
-          const newScript = {
-            id: Date.now().toString(),
-            name: (data.title || "Shared script").slice(0, 100),
-            text: data.text,
-            language: data.language || "en-US",
-            savedAt: new Date().toISOString(),
-          };
-          // Functional update: the fetch resolves after mount, so the saved
-          // scripts state is already populated; never overwrite it blindly.
-          setSavedScripts((prev) => {
-            const updated = [newScript, ...prev].slice(0, MAX_SCRIPTS);
-            try {
-              localStorage.setItem(SCRIPTS_KEY, JSON.stringify(updated));
-            } catch (_) {}
-            return updated;
-          });
-          setText(data.text);
-          if (data.language) setLanguage(data.language);
-          alert(`Shared script "${newScript.name}" was imported and loaded.`);
+          importSharedScript(data);
         })
         .catch(() => {
           alert("This share link is invalid or has expired.");
@@ -905,6 +1142,7 @@ Happy recording!`);
       if (s.showListeningIndicator != null)
         setShowListeningIndicator(s.showListeningIndicator);
       if (s.skipCoHostLines != null) setSkipCoHostLines(s.skipCoHostLines);
+      if (s.smartMode != null) setSmartMode(s.smartMode);
       if (s.textOpacity != null) setTextOpacity(s.textOpacity);
       if (s.aimOpacity != null) setAimOpacity(s.aimOpacity);
       if (s.uiOpacity != null) setUiOpacity(s.uiOpacity);
@@ -944,6 +1182,11 @@ Happy recording!`);
         aimColor,
         showListeningIndicator,
         skipCoHostLines,
+        smartMode,
+        nightMode,
+        nightBrightness,
+        nightTint,
+        nightFocusLines,
         textOpacity,
         aimOpacity,
         uiOpacity,
@@ -979,6 +1222,11 @@ Happy recording!`);
     aimColor,
     showListeningIndicator,
     skipCoHostLines,
+    smartMode,
+    nightMode,
+    nightBrightness,
+    nightTint,
+    nightFocusLines,
     textOpacity,
     aimOpacity,
     uiOpacity,
@@ -996,6 +1244,40 @@ Happy recording!`);
   useEffect(() => {
     skipCoHostRef.current = skipCoHostLines;
   }, [skipCoHostLines]);
+  useEffect(() => {
+    smartModeRef.current = smartMode;
+  }, [smartMode]);
+
+  // A language change has to reach a running recognition session too.
+  useEffect(() => {
+    if (languageRef.current === language) return;
+    languageRef.current = language;
+    if (isListeningRef.current) safeRestartRecognition(150);
+  }, [language]);
+
+  useEffect(() => {
+    const idle = window.requestIdleCallback || ((run) => setTimeout(run, 2000));
+    idle(preloadEditor);
+  }, []);
+
+  // Night mode: controls only appear while the pointer is actually moving.
+  useEffect(() => {
+    if (!nightMode) return;
+    let timer = null;
+    const reveal = () => {
+      setNightChromeVisible(true);
+      clearTimeout(timer);
+      timer = setTimeout(() => setNightChromeVisible(false), 2500);
+    };
+    window.addEventListener("mousemove", reveal, { passive: true });
+    window.addEventListener("touchstart", reveal, { passive: true });
+    return () => {
+      clearTimeout(timer);
+      setNightChromeVisible(false);
+      window.removeEventListener("mousemove", reveal);
+      window.removeEventListener("touchstart", reveal);
+    };
+  }, [nightMode]);
 
   // Toolbar overflow hints: on narrow screens the toolbar scrolls
   // horizontally, but nothing indicated that more icons exist off-screen.
@@ -1022,15 +1304,18 @@ Happy recording!`);
     return () => window.removeEventListener("resize", updateToolbarHints);
   }, []);
 
+  const effectiveBgColor = nightMode ? "#000000" : bgColor;
+  const effectiveTextColor = nightMode ? "#ffffff" : textColor;
+
   // Sync body background with setting
   useEffect(() => {
     try {
       if (typeof document !== "undefined" && document.body) {
-        document.body.style.backgroundColor = bgColor;
-        document.body.style.background = bgColor;
+        document.body.style.backgroundColor = effectiveBgColor;
+        document.body.style.background = effectiveBgColor;
       }
     } catch (_) {}
-  }, [bgColor]);
+  }, [effectiveBgColor]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files && event.target.files[0];
@@ -1087,50 +1372,66 @@ Happy recording!`);
     return false;
   };
 
-  const normalizeWord = (input) => {
-    if (!input) return "";
-    return input
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/ς/g, "σ")
-      .replace(/[^a-zA-Zα-ω0-9]+/g, "")
-      .trim();
-  };
+  // Deferred: parsing a long script must never slow down typing in the editor.
+  const deferredText = useDeferredValue(text);
+  const scriptModel = useMemo(
+    () => buildScriptModel(deferredText),
+    [deferredText]
+  );
+  const scriptLines = scriptModel.lines;
+  const lineStartIndex = scriptModel.lineStart;
 
   useEffect(() => {
-    const lines = text.split(/\r?\n/);
-    linesRawRef.current = lines;
-    const linesWords = lines.map((ln) =>
-      ln.split(/\s+/).filter((w) => w.trim().length > 0)
-    );
-    linesWordsRef.current = linesWords;
-
-    // Which lines belong to a co-host (">>" / "@Name:" prefix)
-    const lineIsCoHostArr = lines.map((ln) => CO_HOST_LINE_RE.test(ln));
-    lineIsCoHostRef.current = lineIsCoHostArr;
-
-    const flatWords = [];
-    const starts = [];
-    const skippable = [];
-    for (let i = 0; i < linesWords.length; i++) {
-      starts.push(flatWords.length);
-      for (const w of linesWords[i]) {
-        flatWords.push(w);
-        skippable.push(lineIsCoHostArr[i]);
-      }
+    lineIsCoHostRef.current = scriptModel.lines.map((line) => !!line.coHost);
+    lineStartIndexRef.current = scriptModel.lineStart;
+    wordsRef.current = scriptModel.words;
+    normalizedWordsRef.current = scriptModel.normalized;
+    skippableWordsRef.current = scriptModel.skippable;
+    readWordsRef.current = new Uint8Array(scriptModel.words.length);
+    setReadVersions([]);
+    setSpanStart(-1);
+    // The text may have become shorter than the position.
+    if (currentWordIndexRef.current >= scriptModel.words.length) {
+      currentWordIndexRef.current = scriptModel.words.length - 1;
+      setCurrentWordIndex(scriptModel.words.length - 1);
     }
-    lineStartIndexRef.current = starts;
-    wordsRef.current = flatWords;
-    normalizedWordsRef.current = flatWords.map(normalizeWord);
-    skippableWordsRef.current = skippable;
-    setLinesWords(linesWords);
-    setLineStartIndex(starts);
-    setLineIsCoHost(lineIsCoHostArr);
-  }, [text]);
+  }, [scriptModel]);
 
   useEffect(() => {
-    if (!hasInitialCenterRef.current && linesWords && linesWords.length > 0) {
+    trackerRef.current = createSmartTracker(
+      scriptModel.normalized,
+      skipCoHostLines ? scriptModel.skippable : []
+    );
+    trackerRef.current.setPosition(currentWordIndexRef.current);
+  }, [scriptModel, skipCoHostLines]);
+
+  function markWordsRead(from, to) {
+    const read = readWordsRef.current;
+    const first = Math.max(0, from);
+    const last = Math.min(to, read.length - 1);
+    if (first > last) return;
+    for (let i = first; i <= last; i++) read[i] = 1;
+    const firstLine = getLineIdxForWord(first);
+    const lastLine = getLineIdxForWord(last);
+    setReadVersions((previous) => {
+      const next = previous.slice();
+      for (let line = firstLine; line <= lastLine; line++) {
+        next[line] = (next[line] || 0) + 1;
+      }
+      return next;
+    });
+  }
+
+  const handleWordClick = useCallback((index) => {
+    trackerRef.current?.clearHeard();
+    trackerRef.current?.setPosition(index);
+    currentWordIndexRef.current = index;
+    setSpanStart(-1);
+    setCurrentWordIndex(index);
+  }, []);
+
+  useEffect(() => {
+    if (!hasInitialCenterRef.current && scriptLines.length > 0) {
       setTimeout(() => {
         if (textContainerRef.current) {
           centerOnWordIndex(0, "auto");
@@ -1139,7 +1440,7 @@ Happy recording!`);
         }
       }, 0);
     }
-  }, [linesWords]);
+  }, [scriptLines]);
 
   const centerOnWordIndex = (wIdx, behavior = "smooth") => {
     if (wIdx == null || wIdx < 0) return;
@@ -1328,6 +1629,7 @@ Happy recording!`);
           setIsPlaying(false);
           return;
         }
+        markWordsRead(next, next);
         setCurrentWordIndex(next);
         // cancel ongoing scroll and start a fresh center to word
         scrollAnimTokenRef.current++;
@@ -1378,7 +1680,8 @@ Happy recording!`);
 
   useEffect(() => {
     const active = isListening || isPlaying;
-    if (!active && !followEnabled) return;
+    // In night mode only the anchor band is lit, so the position must stay there.
+    if (!active && !followEnabled && !nightMode) return;
     if (currentWordIndex < 0 || !textContainerRef.current) return;
 
     const logicalLineIdx = getLineIdxForWord(currentWordIndex);
@@ -1397,6 +1700,7 @@ Happy recording!`);
   }, [
     currentWordIndex,
     followEnabled,
+    nightMode,
     isListening,
     isPlaying,
     fontSize,
@@ -1433,15 +1737,18 @@ Happy recording!`);
           if (typeof window.__lastMicResultTs === "number")
             lastResultTs = window.__lastMicResultTs;
         } catch (_) {}
-        if (now - lastResultTs > 4000 && recognizingRef.current) {
-          // if no audio detected for 4s, stop gracefully to release mic
-          try {
-            recognitionRef.current.stop?.();
-          } catch (_) {}
-        } else if (now - lastResultTs > 5000 && !recognizingRef.current) {
-          // if stopped due to silence, restart cleanly
+        // A running session may be silent for as long as the speaker pauses.
+        // Only recover when no session is running and no restart is scheduled.
+        if (
+          now - lastResultTs > 5000 &&
+          !recognizingRef.current &&
+          !micRestartTimeoutRef.current
+        ) {
           safeRestartRecognition(200);
           lastResultTs = performance.now();
+          try {
+            window.__lastMicResultTs = lastResultTs;
+          } catch (_) {}
         }
       }
       rafId = requestAnimationFrame(tick);
@@ -1631,6 +1938,7 @@ Happy recording!`);
   }, [isListening]);
   useEffect(() => {
     currentWordIndexRef.current = currentWordIndex;
+    trackerRef.current?.setPosition(currentWordIndex);
   }, [currentWordIndex]);
 
   useEffect(() => {
@@ -1668,8 +1976,10 @@ Happy recording!`);
       return;
     }
 
+    setMicError("");
     if (isListening) {
       // Fully tear down immediately and release mic permissions
+      isListeningRef.current = false;
       setIsListening(false);
       setIsPlaying(false);
       hardStopRecognition();
@@ -1682,6 +1992,10 @@ Happy recording!`);
           } catch (_) {}
         }
         safeRestartRecognition(150);
+        isListeningRef.current = true;
+        micRestartAttemptsRef.current = 0;
+        window.__lastMicResultTs = performance.now();
+        trackerRef.current?.clearHeard();
         setIsListening(true);
         setIsPlaying(false);
 
@@ -1855,6 +2169,8 @@ Happy recording!`);
       // Close settings/editor panels if clicking outside
       if (
         (showSettings || showEditor) &&
+        !showAddScript &&
+        !deleteScriptConfirm &&
         !event.target.closest('[data-panel="settings"]')
       ) {
         setShowSettings(false);
@@ -1866,13 +2182,27 @@ Happy recording!`);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [showLanguageSelector, showSettings, showEditor]);
+  }, [
+    showLanguageSelector,
+    showSettings,
+    showEditor,
+    showAddScript,
+    deleteScriptConfirm,
+  ]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
       const tag =
         e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
-      if (tag === "input" || tag === "textarea" || e.isComposing) return;
+      if (
+        tag === "input" ||
+        tag === "textarea" ||
+        e.target?.isContentEditable ||
+        e.isComposing
+      )
+        return;
+      // Browser and OS shortcuts such as Cmd+R are not ours to take.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "v" || e.key === "V") {
         e.preventDefault();
         toggleListening();
@@ -1929,6 +2259,16 @@ Happy recording!`);
         setMirrorX((v) => !v);
         return;
       }
+      if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        setNightMode((v) => !v);
+        return;
+      }
+      if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        setSmartMode((v) => !v);
+        return;
+      }
       if (e.key === "?") {
         e.preventDefault();
         setShowShortcuts((v) => !v);
@@ -1948,7 +2288,7 @@ Happy recording!`);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isListening, isPlaying, showHighlight, showShortcuts]);
+  });
 
   // Recompute language menu position when opened
   useEffect(() => {
@@ -1982,6 +2322,10 @@ Happy recording!`);
     prevVisualLineIdxRef.current = -1;
     currentWordIndexRef.current = -1;
     setCurrentWordIndex(-1);
+    setSpanStart(-1);
+    readWordsRef.current = new Uint8Array(wordsRef.current.length);
+    setReadVersions([]);
+    trackerRef.current?.clearHeard();
 
     // Hard scroll to top (container and window)
     programmaticScrollRef.current = true;
@@ -2205,16 +2549,48 @@ Happy recording!`);
     }
   }, []);
 
+  const nightChromeHidden =
+    nightMode && !nightChromeVisible && !showSettings && !showEditor;
+
+  // Night mode only keeps a band around the reading position lit.
+  const nightLinePx = fontSize * lineHeight;
+  const nightFocusMask = (() => {
+    if (!nightMode || !nightFocusLines) return undefined;
+    const center = `calc(${centerPaddingVh}vh + ${nightLinePx / 2}px)`;
+    const solid = (nightFocusLines * nightLinePx) / 2;
+    const fade = nightLinePx * 1.5;
+    return `linear-gradient(to bottom, transparent calc(${center} - ${solid + fade}px), #000 calc(${center} - ${solid}px), #000 calc(${center} + ${solid}px), transparent calc(${center} + ${solid + fade}px))`;
+  })();
+
   return (
     <main
+      className={nightMode ? "tp-night" : undefined}
       style={{
         width: "100vw",
         height: "100vh",
-        backgroundColor: bgColor,
+        backgroundColor: effectiveBgColor,
         position: "relative",
         overflow: "visible",
+        cursor: nightChromeHidden ? "none" : undefined,
       }}
     >
+      {/* Dims and tints everything below it, including panels and tooltips */}
+      {nightMode && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 2147483000,
+            pointerEvents: "none",
+            mixBlendMode: "multiply",
+            background: `rgb(${(NIGHT_TINTS[nightTint] || NIGHT_TINTS.amber).rgb
+              .map((channel) => Math.round(channel * nightBrightness))
+              .join(",")})`,
+          }}
+        />
+      )}
+
       {/* Center Line Indicator */}
       {showCenterLine && (
         <div
@@ -2243,6 +2619,8 @@ Happy recording!`);
           padding: "15px",
           zIndex: 1,
           borderBottom: "2px solid rgba(255,255,255,0.1)",
+          opacity: nightChromeHidden ? 0 : 1,
+          transition: "opacity 0.3s ease",
         }}
       >
         {toolbarHints.left && (
@@ -2569,6 +2947,16 @@ Happy recording!`);
           </IconButton>
 
           <IconButton uiOpacity={uiOpacity}
+            onClick={() => setNightMode((v) => !v)}
+            ariaLabel="Night mode"
+            tooltipTitle="Night mode (N)"
+            tooltipDesc="Dim, warm and focused for dark rooms"
+            style={{ background: nightMode ? "#5d4037" : "#0f0f0f" }}
+          >
+            <Icon name={"moon"} />
+          </IconButton>
+
+          <IconButton uiOpacity={uiOpacity}
             onClick={resetPosition}
             ariaLabel="Reset"
             tooltipTitle="Reset (R)"
@@ -2692,7 +3080,9 @@ Happy recording!`);
             borderRadius: "12px",
             zIndex: 10000,
             minWidth: "320px",
-            maxWidth: showEditor ? "500px" : "calc(95vw - 40px)",
+            width: showEditor ? "min(720px, calc(100vw - 32px))" : undefined,
+            boxSizing: "border-box",
+            maxWidth: "calc(100vw - 32px)",
             maxHeight: "80vh",
             overflowY: "auto",
             boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
@@ -2731,21 +3121,10 @@ Happy recording!`);
           </div>
           {showEditor ? (
             <div>
-              <textarea
+              <ScriptEditor
                 value={text}
-                onChange={(e) => setText(e.target.value)}
-                style={{
-                  width: "94%",
-                  minHeight: showScriptList ? "25vh" : "50vh",
-                  padding: "10px",
-                  borderRadius: "6px",
-                  border: "1px solid #555",
-                  background: "#222",
-                  color: "white",
-                  fontSize: "14px",
-                  fontFamily: "inherit",
-                  transition: "min-height 0.2s ease",
-                }}
+                onChange={setText}
+                minHeight={showScriptList ? "25vh" : "45vh"}
               />
               <div style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
                 <button
@@ -2914,7 +3293,7 @@ Happy recording!`);
                             <button
                               onClick={() => shareScript(script)}
                               disabled={shareBusyId === script.id}
-                              title="Create a link to open this script on another device (expires in 30 days)"
+                              title="Create a link to open this script on another device"
                               style={{
                                 padding: "5px 10px",
                                 borderRadius: "5px",
@@ -3498,6 +3877,124 @@ Happy recording!`);
                 >
                   Increase if voice tracking feels slow (recommended: 12-15 for
                   English, 8-10 for Greek)
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "20px" }}>
+                <label
+                  style={{
+                    color: "white",
+                    display: "block",
+                    marginBottom: "8px",
+                  }}
+                >
+                  Voice tracking: {smartMode ? "Smart" : "Classic"} (T)
+                </label>
+                <button
+                  onClick={() => setSmartMode(!smartMode)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: "1px solid #555",
+                    background: smartMode ? "#2e7d32" : "#37474f",
+                    color: "white",
+                    cursor: "pointer",
+                  }}
+                  aria-label="Toggle smart tracking"
+                >
+                  {smartMode ? "Smart" : "Classic"}
+                </button>
+                <div
+                  style={{ color: "#aaa", fontSize: "12px", marginTop: "4px" }}
+                >
+                  Smart finds your place anywhere in the script, so you can
+                  rephrase, skip or go back. Classic follows word by word and
+                  uses the lookahead above.
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "20px" }}>
+                <label
+                  style={{
+                    color: "white",
+                    display: "block",
+                    marginBottom: "8px",
+                  }}
+                >
+                  Night mode: {nightMode ? "On" : "Off"} (N)
+                </label>
+                <button
+                  onClick={() => setNightMode(!nightMode)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: "1px solid #555",
+                    background: nightMode ? "#5d4037" : "#37474f",
+                    color: "white",
+                    cursor: "pointer",
+                  }}
+                  aria-label="Toggle night mode"
+                >
+                  {nightMode ? "Turn off" : "Turn on"}
+                </button>
+                <label
+                  style={{ color: "#ccc", display: "block", margin: "10px 0 4px", fontSize: "13px" }}
+                >
+                  Brightness: {Math.round(nightBrightness * 100)}%
+                  <input
+                    type="range"
+                    min="0.05"
+                    max="1"
+                    step="0.05"
+                    value={nightBrightness}
+                    onChange={(e) => setNightBrightness(Number(e.target.value))}
+                    style={{ display: "block", width: "100%", marginTop: "4px" }}
+                  />
+                </label>
+                <label
+                  style={{ color: "#ccc", display: "block", margin: "10px 0 4px", fontSize: "13px" }}
+                >
+                  Lit lines around your position:{" "}
+                  {nightFocusLines ? nightFocusLines : "All"}
+                  <input
+                    type="range"
+                    min="0"
+                    max="9"
+                    step="1"
+                    value={nightFocusLines}
+                    onChange={(e) => setNightFocusLines(Number(e.target.value))}
+                    style={{ display: "block", width: "100%", marginTop: "4px" }}
+                  />
+                </label>
+                <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
+                  {Object.entries(NIGHT_TINTS).map(([key, tint]) => (
+                    <button
+                      key={key}
+                      onClick={() => setNightTint(key)}
+                      aria-pressed={nightTint === key}
+                      style={{
+                        flex: 1,
+                        padding: "6px",
+                        borderRadius: "6px",
+                        border: `1px solid ${nightTint === key ? "white" : "#555"}`,
+                        background: "transparent",
+                        color: `rgb(${tint.rgb.join(",")})`,
+                        cursor: "pointer",
+                        fontSize: "13px",
+                      }}
+                    >
+                      {tint.label}
+                    </button>
+                  ))}
+                </div>
+                <div
+                  style={{ color: "#aaa", fontSize: "12px", marginTop: "6px" }}
+                >
+                  Controls appear when you move the pointer. A browser cannot
+                  change the screen's backlight, so also turn down your display
+                  brightness and use fullscreen (F).
                 </div>
               </div>
 
@@ -4259,8 +4756,10 @@ Happy recording!`);
           overflowY: "auto",
           fontSize: `${fontSize}px`,
           lineHeight: lineHeight,
-          color: textColor,
-          opacity: textOpacity,
+          color: effectiveTextColor,
+          opacity: nightMode ? 1 : textOpacity,
+          maskImage: nightFocusMask,
+          WebkitMaskImage: nightFocusMask,
           textAlign: textAlignStyle,
           // avoid CSS smooth scroll; we manage smoothness via JS
           scrollBehavior: "auto",
@@ -4270,7 +4769,7 @@ Happy recording!`);
         }}
         aria-label="Editor"
       >
-        {showAim && (
+        {showAim && !nightMode && (
           <div
             style={{
               position: "fixed",
@@ -4323,27 +4822,40 @@ Happy recording!`);
             transform: `${mirrorX ? "scaleX(-1)" : "scaleX(1)"} `,
           }}
         >
-          {linesWords.map((lineWordsLocal, lineIdx) => {
+          {scriptLines.map((line, lineIdx) => {
             const lineStart = lineStartIndex[lineIdx] || 0;
-            const lineEnd = lineStart + lineWordsLocal.length - 1;
+            const lineEnd = (lineStartIndex[lineIdx + 1] ?? scriptModel.words.length) - 1;
             const activeIndex =
               currentWordIndex >= lineStart && currentWordIndex <= lineEnd
                 ? currentWordIndex
                 : -1;
+            // A span far behind the position is left over from an earlier jump.
+            const span =
+              spanStart >= 0 &&
+              spanStart <= currentWordIndex &&
+              currentWordIndex - spanStart <= 8
+                ? spanStart
+                : currentWordIndex;
+            const inSpan =
+              currentWordIndex >= 0 && span <= lineEnd && currentWordIndex >= lineStart;
             return (
               <TeleprompterLine
                 key={lineIdx}
-                words={lineWordsLocal}
+                line={line}
                 lineIdx={lineIdx}
-                lineStart={lineStart}
                 activeIndex={activeIndex}
-                isCoHost={!!(skipCoHostLines && lineIsCoHost[lineIdx])}
+                spanFrom={inSpan ? span : -1}
+                spanTo={inSpan ? currentWordIndex : -1}
+                readWords={readWordsRef.current}
+                readVersion={readVersions[lineIdx] || 0}
+                smartMode={smartMode}
+                isCoHost={!!(skipCoHostLines && line.coHost)}
                 showHighlight={showHighlight}
                 highlightColor={highlightColor}
-                textColor={textColor}
+                textColor={effectiveTextColor}
                 paragraphSpacingPx={paragraphSpacingPx}
                 paragraphHighlightOpacity={paragraphHighlightOpacity}
-                onWordClick={setCurrentWordIndex}
+                onWordClick={handleWordClick}
               />
             );
           })}
@@ -4382,7 +4894,52 @@ Happy recording!`);
       )}
 
       {/* Status Indicator (hideable in settings — can distract on camera) */}
-      {isListening && showListeningIndicator && (
+      {isListening && nightMode && (
+        <div
+          aria-label="Listening"
+          style={{
+            position: "fixed",
+            bottom: "12px",
+            left: "50%",
+            width: "6px",
+            height: "6px",
+            borderRadius: "50%",
+            background: "#f44336",
+            opacity: isSpeaking ? 0.9 : 0.35,
+          }}
+        />
+      )}
+      {micError && (
+        <div
+          role="alert"
+          style={{
+            position: "fixed",
+            bottom: "90px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            maxWidth: "calc(100vw - 32px)",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            background: "rgba(183, 28, 28, 0.95)",
+            color: "white",
+            padding: "10px 16px",
+            borderRadius: "10px",
+            fontSize: "14px",
+            zIndex: 5000,
+          }}
+        >
+          <span>{micError}</span>
+          <button
+            onClick={() => setMicError("")}
+            aria-label="Dismiss"
+            style={{ background: "transparent", border: "none", color: "white", fontSize: "18px", cursor: "pointer" }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {isListening && showListeningIndicator && !nightMode && (
         <div
           style={{
             position: "fixed",
@@ -4406,7 +4963,7 @@ Happy recording!`);
       )}
 
       {/* Support Message */}
-      {showSupportMessage && (
+      {showSupportMessage && !nightMode && (
         <div
           style={{
             position: "fixed",
@@ -4598,8 +5155,9 @@ Happy recording!`);
               border: "2px solid rgba(255,255,255,0.15)",
               borderRadius: "16px",
               padding: "28px",
-              maxWidth: "540px",
+              maxWidth: "760px",
               width: "calc(100vw - 40px)",
+              boxSizing: "border-box",
               maxHeight: "85vh",
               display: "flex",
               flexDirection: "column",
@@ -4704,26 +5262,13 @@ Happy recording!`);
             >
               Script text
             </label>
-            <textarea
-              value={addScriptText}
-              onChange={(e) => setAddScriptText(e.target.value)}
-              onKeyDown={(e) => e.stopPropagation()}
-              placeholder="Paste or type your script here..."
-              style={{
-                flex: 1,
-                minHeight: "200px",
-                padding: "12px 14px",
-                borderRadius: "8px",
-                border: `1px solid ${scriptFormTouched && !addScriptText.trim() ? "#b71c1c" : "#444"}`,
-                background: "#1a1a1a",
-                color: "white",
-                fontSize: "14px",
-                fontFamily: "inherit",
-                outline: "none",
-                resize: "vertical",
-                marginBottom: scriptFormTouched && !addScriptText.trim() ? "4px" : "16px",
-              }}
-            />
+            <div style={{ flex: 1, overflowY: "auto", minHeight: 0, marginBottom: "16px" }}>
+              <ScriptEditor
+                value={addScriptText}
+                onChange={setAddScriptText}
+                minHeight="200px"
+              />
+            </div>
             {scriptFormTouched && !addScriptText.trim() && (
               <div style={{ color: "#ef5350", fontSize: "12px", marginBottom: "12px" }}>
                 Please enter the script text.
@@ -4738,11 +5283,11 @@ Happy recording!`);
                 lineHeight: 1.5,
               }}
             >
-              💡 Recording with a co-host? Start their lines with{" "}
+              💡 <strong>Co-host</strong> parts (or lines starting with{" "}
               <code style={{ color: "#ffd54f" }}>&gt;&gt;</code> or{" "}
-              <code style={{ color: "#ffd54f" }}>@Name:</code> — they'll appear
-              dimmed and voice tracking will skip to your next line
-              automatically.
+              <code style={{ color: "#ffd54f" }}>@Name:</code>) appear dimmed and
+              voice tracking skips them. <strong>Not spoken</strong> blocks stay
+              visible as notes and are never tracked.
             </div>
 
             <div
@@ -4962,6 +5507,8 @@ Happy recording!`);
               ["B", "My Scripts (in editor)"],
               ["F", "Fullscreen mode"],
               ["M", "Mirror text horizontally"],
+              ["N", "Night mode"],
+              ["T", "Smart / classic voice tracking"],
               ["?", "Show this panel"],
             ].map(([key, desc]) => (
               <div
