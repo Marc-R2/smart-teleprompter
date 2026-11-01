@@ -292,7 +292,6 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 - 🐛 **Bug Reports**: [GitHub Issues](https://github.com/Voumellis/smart-teleprompter/issues)
 - 💡 **Feature Requests**: [GitHub Discussions](https://github.com/Voumellis/smart-teleprompter/discussions)
-- ☕ **Support Development**: [Buy Me a Coffee](https://buymeacoffee.com/nrjsoeq61)
 
 ## 🔄 Changelog
 

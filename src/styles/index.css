@@ -48,22 +48,33 @@
   }
 }
 
-/* Custom scrollbar for toolbar */
-div[style*="overflowX: auto"]::-webkit-scrollbar {
-  height: 6px;
+/* Slim scrollbars inside the app. Browsers with scrollbar-width ignore the
+   -webkit rules below, which remain for older Safari. */
+#root * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
 }
 
-div[style*="overflowX: auto"]::-webkit-scrollbar-track {
+#root *:hover {
+  scrollbar-color: rgba(255, 255, 255, 0.4) transparent;
+}
+
+#root *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+#root *::-webkit-scrollbar-track {
   background: transparent;
 }
 
-div[style*="overflowX: auto"]::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
+#root *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
 }
 
-div[style*="overflowX: auto"]::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.5);
+#root *::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
 }
 
 /* Custom Slider Component */
@@ -126,11 +137,11 @@ body:has(.tp-night) {
   overflow: hidden;
 }
 
-.tp-night div {
+#root .tp-night div {
   scrollbar-width: none;
 }
 
-.tp-night div::-webkit-scrollbar {
+#root .tp-night div::-webkit-scrollbar {
   display: none;
 }
 
