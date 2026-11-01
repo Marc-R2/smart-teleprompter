@@ -70,7 +70,7 @@ function distancePenalty(distance) {
 function hasEnoughEvidence(distance, candidate) {
   const { score, matched } = candidate;
   if (distance >= 1 && distance <= 3) return score >= 0.3;
-  if (distance >= 4 && distance <= 10) return matched >= 2 || score >= 1.2;
+  if (distance >= 4 && distance <= 10) return matched >= 2;
   if (distance >= 11 && distance <= 40) return matched >= 2 && score >= 1.6;
   return matched >= 3 && score >= 2.4;
 }

@@ -16,6 +16,19 @@ import {
 } from "./lib/scriptModel";
 import { createSmartTracker } from "./lib/smartTracker";
 import { decodeShareHash, encodeShareHash, isShareHash } from "./lib/shareLink";
+import { useWakeLock } from "./lib/useWakeLock";
+import { createSessionStats } from "./lib/sessionStats";
+import { backupFileName, createBackup, mergeScripts, parseBackup } from "./lib/backup";
+import {
+  DEFAULT_LOCAL_MODEL,
+  LocalRecognizer,
+  deleteLocalModels,
+  getLocalDevice,
+  loadLocalEngine,
+  unloadLocalEngine,
+} from "./lib/localRecognizer";
+import SessionHud from "./components/SessionHud";
+import LocalEngineDialog from "./components/LocalEngineDialog";
 
 // Inline SVG icons (Heroicons v2.1.1 outline, MIT). Inlined instead of
 // loading from unpkg.com so the UI has zero external requests, renders
@@ -67,6 +80,13 @@ const NIGHT_TINTS = {
   red: { label: "Red", rgb: [255, 70, 50] },
   neutral: { label: "Gray", rgb: [255, 255, 255] },
 };
+
+const HUD_CORNERS = [
+  ["top-left", "↖ Top left"],
+  ["top-right", "↗ Top right"],
+  ["bottom-left", "↙ Bottom left"],
+  ["bottom-right", "↘ Bottom right"],
+];
 
 function withAlpha(hexColor, alpha) {
   const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hexColor);
@@ -441,6 +461,7 @@ B - My Scripts library
 F - Fullscreen mode
 M - Mirror text horizontally
 N - Night mode
+I - Stats display
 T - Smart tracking on/off
 ? - Show keyboard shortcuts
 
@@ -505,6 +526,15 @@ Happy recording!`);
   const [spanStart, setSpanStart] = useState(-1);
   const [readVersions, setReadVersions] = useState([]);
   const [micError, setMicError] = useState("");
+  const [showStats, setShowStats] = useState(false);
+  const [statsCorner, setStatsCorner] = useState("bottom-left");
+  const [showTranscript, setShowTranscript] = useState(true);
+  // Cloud is the default. "local" is only ever set after the consent dialog.
+  const [recognitionEngine, setRecognitionEngine] = useState("cloud");
+  const [localModel, setLocalModel] = useState(DEFAULT_LOCAL_MODEL);
+  const [localStatus, setLocalStatus] = useState({ state: "idle" });
+  const [showLocalDialog, setShowLocalDialog] = useState(false);
+  const [hasStoredModel, setHasStoredModel] = useState(false);
   // Night mode: read old values synchronously so a dark room never sees a flash
   const [nightMode, setNightMode] = useState(() =>
     savedSetting("nightMode", false)
@@ -601,6 +631,11 @@ Happy recording!`);
   const smartModeRef = useRef(true);
   const readWordsRef = useRef(new Uint8Array(0));
   const languageRef = useRef("en-US");
+  const engineRef = useRef("cloud");
+  const statsIndexRef = useRef(-1);
+  const statsRef = useRef(null);
+  statsRef.current ??= createSessionStats();
+  const backupInputRef = useRef(null);
   const micStartedAtRef = useRef(0);
   const micRestartAttemptsRef = useRef(0);
   const skipCoHostRef = useRef(true);
@@ -686,6 +721,15 @@ Happy recording!`);
       micRestartAttemptsRef.current = 0;
       setMicError("");
 
+      let finalText = "";
+      let interimText = "";
+      for (let r = event.resultIndex; r < event.results.length; r++) {
+        const heard = event.results[r][0]?.transcript ?? "";
+        if (event.results[r].isFinal) finalText += ` ${heard}`;
+        else interimText += ` ${heard}`;
+      }
+      statsRef.current.addHeard(finalText, interimText);
+
       if (smartModeRef.current && trackerRef.current) {
         const finalTokens = [];
         const interimTokens = [];
@@ -761,6 +805,8 @@ Happy recording!`);
         "audio-capture": "No microphone found. Connect one, then press V.",
         "language-not-supported":
           "This browser cannot recognize the selected language.",
+        "local-engine":
+          "On-device recognition stopped. Press V to retry, or switch to cloud in Settings.",
       }[event.error];
       if (fatal) {
         isListeningRef.current = false;
@@ -824,10 +870,15 @@ Happy recording!`);
       }
     } catch (_) {}
     try {
-      const SpeechRecognition =
-        window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) return;
-      const rec = new SpeechRecognition();
+      let rec;
+      if (engineRef.current === "local") {
+        rec = new LocalRecognizer();
+      } else {
+        const SpeechRecognition =
+          window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) return;
+        rec = new SpeechRecognition();
+      }
       recognitionRef.current = attachRecognitionHandlers(rec);
       setTimeout(() => {
         try {
@@ -866,6 +917,11 @@ Happy recording!`);
     nightBrightness: 0.4,
     nightTint: "amber",
     nightFocusLines: 3,
+    showStats: false,
+    statsCorner: "bottom-left",
+    showTranscript: true,
+    recognitionEngine: "cloud",
+    localModel: DEFAULT_LOCAL_MODEL,
     textOpacity: 0.8,
     aimOpacity: 1,
     uiOpacity: 0.9,
@@ -900,6 +956,11 @@ Happy recording!`);
     setNightBrightness(defaultSettings.nightBrightness);
     setNightTint(defaultSettings.nightTint);
     setNightFocusLines(defaultSettings.nightFocusLines);
+    setShowStats(defaultSettings.showStats);
+    setStatsCorner(defaultSettings.statsCorner);
+    setShowTranscript(defaultSettings.showTranscript);
+    setRecognitionEngine(defaultSettings.recognitionEngine);
+    setLocalModel(defaultSettings.localModel);
     setTextOpacity(defaultSettings.textOpacity);
     setAimOpacity(defaultSettings.aimOpacity);
     setUiOpacity(defaultSettings.uiOpacity);
@@ -1117,45 +1178,107 @@ Happy recording!`);
     setDeleteScriptConfirm(null);
   };
 
+  const applySettings = (s) => {
+    if (s.fontSize != null) setFontSize(s.fontSize);
+    if (s.margin != null) setMargin(s.margin);
+    if (s.lineHeight != null) setLineHeight(s.lineHeight);
+    if (s.scrollSpeed != null) setScrollSpeed(s.scrollSpeed);
+    if (s.bgColor) setBgColor(s.bgColor);
+    if (s.textColor) setTextColor(s.textColor);
+    if (s.highlightColor) setHighlightColor(s.highlightColor);
+    if (typeof s.text === "string") setText(s.text);
+    if (s.followEnabled != null) setFollowEnabled(s.followEnabled);
+    if (s.lookaheadWindow != null) setLookaheadWindow(s.lookaheadWindow);
+    if (s.centerPaddingVh != null) setCenterPaddingVh(s.centerPaddingVh);
+    if (s.showAim != null) setShowAim(s.showAim);
+    if (s.aimOffsetX != null) setAimOffsetX(s.aimOffsetX);
+    if (s.aimOffsetY != null) setAimOffsetY(s.aimOffsetY);
+    if (s.aimStyle) setAimStyle(s.aimStyle);
+    if (s.aimColor) setAimColor(s.aimColor);
+    if (s.showListeningIndicator != null)
+      setShowListeningIndicator(s.showListeningIndicator);
+    if (s.skipCoHostLines != null) setSkipCoHostLines(s.skipCoHostLines);
+    if (s.smartMode != null) setSmartMode(s.smartMode);
+    if (s.textOpacity != null) setTextOpacity(s.textOpacity);
+    if (s.aimOpacity != null) setAimOpacity(s.aimOpacity);
+    if (s.uiOpacity != null) setUiOpacity(s.uiOpacity);
+    if (s.paragraphSpacingPx != null)
+      setParagraphSpacingPx(s.paragraphSpacingPx);
+    if (s.sidePaddingVw != null) setSidePaddingVw(s.sidePaddingVw);
+    if (s.textAlignStyle) setTextAlignStyle(s.textAlignStyle);
+    if (s.paragraphHighlightOpacity != null)
+      setParagraphHighlightOpacity(s.paragraphHighlightOpacity);
+    if (s.language) setLanguage(s.language);
+    if (s.mirrorX != null) setMirrorX(!!s.mirrorX);
+    if (s.nightMode != null) setNightMode(s.nightMode);
+    if (s.nightBrightness != null) setNightBrightness(s.nightBrightness);
+    if (s.nightTint) setNightTint(s.nightTint);
+    if (s.nightFocusLines != null) setNightFocusLines(s.nightFocusLines);
+    if (s.showStats != null) setShowStats(s.showStats);
+    if (s.statsCorner) setStatsCorner(s.statsCorner);
+    if (s.showTranscript != null) setShowTranscript(s.showTranscript);
+    if (s.recognitionEngine) setRecognitionEngine(s.recognitionEngine);
+    if (s.localModel) setLocalModel(s.localModel);
+  };
+
   // Load settings on mount
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (!raw) return;
-      const s = JSON.parse(raw);
-      if (s.fontSize != null) setFontSize(s.fontSize);
-      if (s.margin != null) setMargin(s.margin);
-      if (s.lineHeight != null) setLineHeight(s.lineHeight);
-      if (s.scrollSpeed != null) setScrollSpeed(s.scrollSpeed);
-      if (s.bgColor) setBgColor(s.bgColor);
-      if (s.textColor) setTextColor(s.textColor);
-      if (s.highlightColor) setHighlightColor(s.highlightColor);
-      if (typeof s.text === "string") setText(s.text);
-      if (s.followEnabled != null) setFollowEnabled(s.followEnabled);
-      if (s.lookaheadWindow != null) setLookaheadWindow(s.lookaheadWindow);
-      if (s.centerPaddingVh != null) setCenterPaddingVh(s.centerPaddingVh);
-      if (s.showAim != null) setShowAim(s.showAim);
-      if (s.aimOffsetX != null) setAimOffsetX(s.aimOffsetX);
-      if (s.aimOffsetY != null) setAimOffsetY(s.aimOffsetY);
-      if (s.aimStyle) setAimStyle(s.aimStyle);
-      if (s.aimColor) setAimColor(s.aimColor);
-      if (s.showListeningIndicator != null)
-        setShowListeningIndicator(s.showListeningIndicator);
-      if (s.skipCoHostLines != null) setSkipCoHostLines(s.skipCoHostLines);
-      if (s.smartMode != null) setSmartMode(s.smartMode);
-      if (s.textOpacity != null) setTextOpacity(s.textOpacity);
-      if (s.aimOpacity != null) setAimOpacity(s.aimOpacity);
-      if (s.uiOpacity != null) setUiOpacity(s.uiOpacity);
-      if (s.paragraphSpacingPx != null)
-        setParagraphSpacingPx(s.paragraphSpacingPx);
-      if (s.sidePaddingVw != null) setSidePaddingVw(s.sidePaddingVw);
-      if (s.textAlignStyle) setTextAlignStyle(s.textAlignStyle);
-      if (s.paragraphHighlightOpacity != null)
-        setParagraphHighlightOpacity(s.paragraphHighlightOpacity);
-      if (s.language) setLanguage(s.language);
-      if (s.mirrorX != null) setMirrorX(!!s.mirrorX);
+      applySettings(JSON.parse(raw));
     } catch (_) {}
   }, []);
+
+  // --- Backup to a file ---
+  const exportBackup = () => {
+    let settings = {};
+    try {
+      settings = JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {};
+    } catch (_) {}
+    const blob = new Blob(
+      [createBackup(savedScripts, { ...settings, text })],
+      { type: "application/json" }
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = backupFileName();
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importBackup = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      // The recognition engine is left out: restoring a backup on another
+      // device must never start a model download nobody agreed to there.
+      const { recognitionEngine: _engine, localModel: _model, ...restorable } =
+        defaultSettings;
+      const backup = parseBackup(await file.text(), { ...restorable, text: "" });
+      const merged = mergeScripts(savedScripts, backup.scripts, MAX_SCRIPTS);
+      saveScriptsToStorage(merged.scripts);
+      const parts = [`${merged.added} script(s) restored.`];
+      if (merged.duplicates) parts.push(`${merged.duplicates} already existed.`);
+      if (merged.rejected) {
+        parts.push(`${merged.rejected} did not fit (limit: ${MAX_SCRIPTS}).`);
+      }
+      if (
+        Object.keys(backup.settings).length &&
+        confirm(
+          `${parts.join(" ")}\n\nAlso replace your current settings and open script with the ones from the backup?`
+        )
+      ) {
+        applySettings(backup.settings);
+      } else if (!Object.keys(backup.settings).length) {
+        alert(parts.join(" "));
+      }
+    } catch (error) {
+      alert(error.message);
+    }
+  };
 
   // Persist settings on change.
   // Debounced (400ms): previously this serialized ALL settings PLUS the whole
@@ -1187,6 +1310,11 @@ Happy recording!`);
         nightBrightness,
         nightTint,
         nightFocusLines,
+        showStats,
+        statsCorner,
+        showTranscript,
+        recognitionEngine,
+        localModel,
         textOpacity,
         aimOpacity,
         uiOpacity,
@@ -1227,6 +1355,11 @@ Happy recording!`);
     nightBrightness,
     nightTint,
     nightFocusLines,
+    showStats,
+    statsCorner,
+    showTranscript,
+    recognitionEngine,
+    localModel,
     textOpacity,
     aimOpacity,
     uiOpacity,
@@ -1254,6 +1387,81 @@ Happy recording!`);
     languageRef.current = language;
     if (isListeningRef.current) safeRestartRecognition(150);
   }, [language]);
+
+  useEffect(() => {
+    if (engineRef.current === recognitionEngine) return;
+    engineRef.current = recognitionEngine;
+    if (isListeningRef.current) safeRestartRecognition(150);
+  }, [recognitionEngine]);
+
+  // The screen must not go dark in the middle of reading.
+  const sessionActive = isListening || isPlaying;
+  useWakeLock(sessionActive);
+  useEffect(() => {
+    statsRef.current.setRunning(sessionActive);
+  }, [sessionActive]);
+
+  const confirmLocalEngine = async (model) => {
+    setLocalStatus({ state: "loading", loaded: 0, total: 0 });
+    try {
+      await loadLocalEngine(model, (loaded, total) =>
+        setLocalStatus({ state: "loading", loaded, total })
+      );
+      setLocalModel(model);
+      setRecognitionEngine("local");
+      setLocalStatus({ state: "ready" });
+      setShowLocalDialog(false);
+    } catch (error) {
+      setLocalStatus({ state: "error", message: `Could not load the model: ${error.message}.` });
+    }
+  };
+
+  const cancelLocalEngine = () => {
+    if (localStatus.state === "loading") unloadLocalEngine();
+    setLocalStatus({ state: "idle" });
+    setShowLocalDialog(false);
+  };
+
+  const removeLocalEngine = async () => {
+    setRecognitionEngine("cloud");
+    setLocalStatus({ state: "idle" });
+    await deleteLocalModels().catch(() => {});
+    setHasStoredModel(false);
+  };
+
+  // The model stays stored after switching back to cloud, so it must remain
+  // deletable from there too.
+  useEffect(() => {
+    if (!showSettings || typeof caches === "undefined") return;
+    caches.has("transformers-cache").then(setHasStoredModel, () => {});
+  }, [showSettings, recognitionEngine]);
+
+  const getSessionProgress = useCallback(() => {
+    const normalized = normalizedWordsRef.current;
+    const skippable = skipCoHostRef.current ? skippableWordsRef.current : [];
+    const read = readWordsRef.current;
+    const position = currentWordIndexRef.current;
+    let totalWords = 0;
+    let readWords = 0;
+    let skippedWords = 0;
+    let passedWords = 0;
+    for (let i = 0; i < normalized.length; i++) {
+      if (!normalized[i] || skippable[i]) continue;
+      totalWords += 1;
+      if (read[i]) readWords += 1;
+      if (i <= position) {
+        passedWords += 1;
+        if (!read[i]) skippedWords += 1;
+      }
+    }
+    return {
+      totalWords,
+      readWords,
+      skippedWords,
+      remainingWords: totalWords - passedWords,
+      percent: totalWords ? Math.round((passedWords / totalWords) * 100) : 0,
+    };
+  }, []);
 
   useEffect(() => {
     const idle = window.requestIdleCallback || ((run) => setTimeout(run, 2000));
@@ -1390,6 +1598,7 @@ Happy recording!`);
     readWordsRef.current = new Uint8Array(scriptModel.words.length);
     setReadVersions([]);
     setSpanStart(-1);
+    statsRef.current.reset();
     // The text may have become shorter than the position.
     if (currentWordIndexRef.current >= scriptModel.words.length) {
       currentWordIndexRef.current = scriptModel.words.length - 1;
@@ -1939,6 +2148,12 @@ Happy recording!`);
   useEffect(() => {
     currentWordIndexRef.current = currentWordIndex;
     trackerRef.current?.setPosition(currentWordIndex);
+    // Only steady reading counts towards the tempo, not jumps.
+    const advanced = currentWordIndex - statsIndexRef.current;
+    statsIndexRef.current = currentWordIndex;
+    if (advanced >= 1 && advanced <= 12 && (isListeningRef.current || isPlaying)) {
+      statsRef.current.recordProgress(advanced);
+    }
   }, [currentWordIndex]);
 
   useEffect(() => {
@@ -1959,9 +2174,26 @@ Happy recording!`);
     };
   }, []);
 
-  const toggleListening = () => {
+  const toggleListening = async () => {
+    const usesLocalEngine = engineRef.current === "local";
+    if (usesLocalEngine && !isListening) {
+      // Already agreed to earlier; after a reload it loads from the browser
+      // cache. Failing must not quietly send the voice to the cloud instead.
+      setLocalStatus({ state: "loading", loaded: 0, total: 0 });
+      try {
+        await loadLocalEngine(localModel, (loaded, total) =>
+          setLocalStatus({ state: "loading", loaded, total })
+        );
+        setLocalStatus({ state: "ready" });
+      } catch (error) {
+        setLocalStatus({ state: "idle" });
+        setMicError(`On-device model could not load: ${error.message}`);
+        return;
+      }
+    }
+
     // Prevent speech recognition on iOS devices
-    if (isIOSChrome) {
+    if (!usesLocalEngine && isIOSChrome) {
       alert(
         "Speech recognition doesn't work on iOS devices. Only Auto Play mode is available."
       );
@@ -1969,7 +2201,7 @@ Happy recording!`);
     }
 
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
+    if (!usesLocalEngine && !SR) {
       alert(
         "Speech recognition is not supported in this browser. Please use Chrome or Edge, or press P for auto-scroll mode."
       );
@@ -2171,6 +2403,7 @@ Happy recording!`);
         (showSettings || showEditor) &&
         !showAddScript &&
         !deleteScriptConfirm &&
+        !showLocalDialog &&
         !event.target.closest('[data-panel="settings"]')
       ) {
         setShowSettings(false);
@@ -2188,6 +2421,7 @@ Happy recording!`);
     showEditor,
     showAddScript,
     deleteScriptConfirm,
+    showLocalDialog,
   ]);
 
   useEffect(() => {
@@ -2264,6 +2498,11 @@ Happy recording!`);
         setNightMode((v) => !v);
         return;
       }
+      if (e.key === "i" || e.key === "I") {
+        e.preventDefault();
+        setShowStats((v) => !v);
+        return;
+      }
       if (e.key === "t" || e.key === "T") {
         e.preventDefault();
         setSmartMode((v) => !v);
@@ -2326,6 +2565,7 @@ Happy recording!`);
     readWordsRef.current = new Uint8Array(wordsRef.current.length);
     setReadVersions([]);
     trackerRef.current?.clearHeard();
+    statsRef.current.reset();
 
     // Hard scroll to top (container and window)
     programmaticScrollRef.current = true;
@@ -3214,6 +3454,49 @@ Happy recording!`);
                       + Add Script
                     </button>
 
+                    <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+                      <button
+                        onClick={exportBackup}
+                        title="Save all scripts and settings to a file"
+                        style={{
+                          flex: 1,
+                          padding: "8px 12px",
+                          borderRadius: "8px",
+                          border: "1px solid #555",
+                          background: "transparent",
+                          color: "#ccc",
+                          cursor: "pointer",
+                          fontSize: "12px",
+                        }}
+                      >
+                        ⬇ Save backup
+                      </button>
+                      <button
+                        onClick={() => backupInputRef.current?.click()}
+                        title="Add the scripts from a backup file to this library"
+                        style={{
+                          flex: 1,
+                          padding: "8px 12px",
+                          borderRadius: "8px",
+                          border: "1px solid #555",
+                          background: "transparent",
+                          color: "#ccc",
+                          cursor: "pointer",
+                          fontSize: "12px",
+                        }}
+                      >
+                        ⬆ Restore backup
+                      </button>
+                      <input
+                        ref={backupInputRef}
+                        type="file"
+                        accept=".json,application/json"
+                        aria-label="Backup file"
+                        onChange={importBackup}
+                        style={{ display: "none" }}
+                      />
+                    </div>
+
                     {savedScripts.length === 0 ? (
                       <div
                         style={{
@@ -3878,6 +4161,148 @@ Happy recording!`);
                   Increase if voice tracking feels slow (recommended: 12-15 for
                   English, 8-10 for Greek)
                 </div>
+              </div>
+
+              <div style={{ marginBottom: "20px" }}>
+                <label
+                  style={{
+                    color: "white",
+                    display: "block",
+                    marginBottom: "8px",
+                  }}
+                >
+                  Speech recognition:{" "}
+                  {recognitionEngine === "local" ? "On device" : "Cloud"}
+                </label>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    onClick={() => setRecognitionEngine("cloud")}
+                    aria-pressed={recognitionEngine === "cloud"}
+                    style={{
+                      flex: 1,
+                      padding: "10px 12px",
+                      borderRadius: "8px",
+                      border: "1px solid #555",
+                      background: recognitionEngine === "cloud" ? "#2e7d32" : "#37474f",
+                      color: "white",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cloud (default)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setLocalStatus({ state: "idle" });
+                      setShowLocalDialog(true);
+                    }}
+                    aria-pressed={recognitionEngine === "local"}
+                    style={{
+                      flex: 1,
+                      padding: "10px 12px",
+                      borderRadius: "8px",
+                      border: "1px solid #555",
+                      background: recognitionEngine === "local" ? "#2e7d32" : "#37474f",
+                      color: "white",
+                      cursor: "pointer",
+                    }}
+                  >
+                    On device (experimental)
+                  </button>
+                </div>
+                {hasStoredModel && (
+                  <button
+                    onClick={removeLocalEngine}
+                    style={{
+                      marginTop: "8px",
+                      padding: "6px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid #b71c1c",
+                      background: "transparent",
+                      color: "#ef5350",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                    }}
+                  >
+                    Delete the downloaded model and use cloud
+                  </button>
+                )}
+                <div
+                  style={{ color: "#aaa", fontSize: "12px", marginTop: "4px" }}
+                >
+                  Cloud uses your browser's speech service. On device keeps your
+                  voice on this device and needs a one-time model download.
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "20px" }}>
+                <label
+                  style={{
+                    color: "white",
+                    display: "block",
+                    marginBottom: "8px",
+                  }}
+                >
+                  Stats display: {showStats ? "On" : "Off"} (I)
+                </label>
+                <button
+                  onClick={() => setShowStats(!showStats)}
+                  aria-label="Toggle stats display"
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: "1px solid #555",
+                    background: showStats ? "#2e7d32" : "#37474f",
+                    color: "white",
+                    cursor: "pointer",
+                  }}
+                >
+                  {showStats ? "Hide" : "Show"}
+                </button>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "6px",
+                    marginTop: "8px",
+                  }}
+                >
+                  {HUD_CORNERS.map(([corner, label]) => (
+                    <button
+                      key={corner}
+                      onClick={() => setStatsCorner(corner)}
+                      aria-pressed={statsCorner === corner}
+                      style={{
+                        padding: "6px",
+                        borderRadius: "6px",
+                        border: `1px solid ${statsCorner === corner ? "white" : "#555"}`,
+                        background: "transparent",
+                        color: "white",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    color: "#ccc",
+                    fontSize: "13px",
+                    marginTop: "8px",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showTranscript}
+                    onChange={(e) => setShowTranscript(e.target.checked)}
+                  />
+                  Show the last recognized words
+                </label>
               </div>
 
               <div style={{ marginBottom: "20px" }}>
@@ -4893,6 +5318,49 @@ Happy recording!`);
         </div>
       )}
 
+      {showStats && (
+        <SessionHud
+          stats={statsRef.current}
+          corner={statsCorner}
+          showTranscript={showTranscript}
+          getProgress={getSessionProgress}
+          engineLabel={
+            recognitionEngine === "local"
+              ? `On device${getLocalDevice() ? ` · ${getLocalDevice()}` : ""}`
+              : "Cloud recognition"
+          }
+          mirrored={mirrorX}
+        />
+      )}
+
+      {showLocalDialog && (
+        <LocalEngineDialog
+          status={localStatus}
+          onConfirm={confirmLocalEngine}
+          onCancel={cancelLocalEngine}
+        />
+      )}
+
+      {localStatus.state === "loading" && !showLocalDialog && (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            bottom: "90px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(38, 50, 56, 0.95)",
+            color: "white",
+            padding: "10px 16px",
+            borderRadius: "10px",
+            fontSize: "14px",
+            zIndex: 5000,
+          }}
+        >
+          Loading the on-device model…
+        </div>
+      )}
+
       {/* Status Indicator (hideable in settings — can distract on camera) */}
       {isListening && nightMode && (
         <div
@@ -5508,6 +5976,7 @@ Happy recording!`);
               ["F", "Fullscreen mode"],
               ["M", "Mirror text horizontally"],
               ["N", "Night mode"],
+              ["I", "Stats display"],
               ["T", "Smart / classic voice tracking"],
               ["?", "Show this panel"],
             ].map(([key, desc]) => (

@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🖊️ **Rich Text Editor**: Formatting toolbar, Markdown paste and a Markdown source view. Falls back to a plain text field if it cannot load
 - 🙊 **Unspoken Notes**: Code blocks and inline code are shown but never tracked
 - 🌙 **Night Mode** (`N`): Dim tinted text on pure black, a lit band around the reading position and controls that hide themselves
+- 🔆 **Wake Lock**: The screen stays on while voice tracking or auto-scroll runs
+- 📊 **Stats Display** (`I`): Time, tempo, progress, read and skipped words and a live transcript, in a corner of your choice
+- 💾 **Backup to a File**: Save and restore all scripts and settings; restoring never overwrites an existing script
+- 🧪 **On-Device Recognition (experimental)**: Optional Whisper model in the browser, on WebGPU or WebAssembly, after an explicit confirmation. Cloud recognition stays the default
 - 🚀 **GitHub Pages Deployment**: Workflow included; the app and service worker now work from a subfolder
 
 ### Changed

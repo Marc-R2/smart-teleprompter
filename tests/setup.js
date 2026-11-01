@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
+import { cleanup } from "@testing-library/react";
 
 // Mock SpeechRecognition API (not available in jsdom)
 class MockSpeechRecognition {
@@ -31,3 +32,5 @@ vi.stubGlobal("localStorage", {
   removeItem: (key) => storage.delete(key),
   clear: () => storage.clear(),
 });
+
+afterEach(cleanup);

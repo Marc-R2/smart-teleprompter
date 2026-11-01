@@ -49,11 +49,24 @@ A free, open-source teleprompter application that uses real-time speech recognit
   few lines around your position lit and all controls hidden until you move the
   pointer. Disturbs others as little as possible in a dark room
 
+### 🎙️ During a Session
+
+- **Screen stays on** while voice tracking or auto-scroll runs (where the browser
+  supports the Wake Lock API)
+- **Stats display** (`I`) in a corner of your choice: elapsed and remaining time,
+  tempo, progress, read and skipped words, plus a live transcript of what was
+  recognized
+- **On-device recognition (experimental)** — optional Whisper model running in
+  the browser, so your voice stays on your device. Nothing is downloaded before
+  you confirm; cloud recognition remains the default
+
 ### 🔗 Sharing & Offline
 
 - **Share scripts via link** — send any saved script to another device. The
   script travels compressed inside the link itself: no account, no server, no
   expiry
+- **Backup to a file** — save all scripts and settings as JSON and restore them
+  on any device, from My Scripts
 - **Installable PWA** — install from the browser for a standalone app window
 - **Offline support** — the app shell is cached by a service worker;
   auto-scroll mode works with no internet at all
@@ -237,6 +250,9 @@ To build for a subfolder yourself, set `BASE_PATH=/<repository>/`.
 
 ### Cloudflare extras (optional, free tier)
 
+- **On-device recognition** downloads from `huggingface.co` and
+  `cdn.jsdelivr.net`. A strict Content Security Policy must allow both, as
+  `public/_headers` does.
 - **Old share links** (`?share=<id>`) are still served by
   `functions/api/share/` with a KV namespace bound as `SHARES`. New links do not
   need it.

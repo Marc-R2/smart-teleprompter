@@ -70,3 +70,32 @@ describe("Script rendering and controls", () => {
     );
   });
 });
+
+describe("Recognition engine and stats", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.location.hash = "";
+  });
+
+  it("defaults to cloud and downloads nothing before consent", async () => {
+    const worker = vi.fn();
+    vi.stubGlobal("Worker", worker);
+    render(<SmartTeleprompter />);
+    fireEvent.click(screen.getByLabelText("Settings"));
+    expect(await screen.findByText("Speech recognition:", { exact: false })).toHaveTextContent("Cloud");
+    fireEvent.click(screen.getByText("On device (experimental)"));
+    expect(screen.getByRole("dialog")).toHaveTextContent("EXPERIMENTAL");
+    expect(screen.getByRole("dialog")).toHaveTextContent("huggingface.co");
+    expect(worker).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(worker).not.toHaveBeenCalled();
+  });
+
+  it("toggles the stats display with I", async () => {
+    render(<SmartTeleprompter />);
+    expect(screen.queryByLabelText("Session stats")).toBeNull();
+    fireEvent.keyDown(window, { key: "i" });
+    expect(await screen.findByLabelText("Session stats")).toHaveTextContent("Elapsed");
+  });
+});
